@@ -16,4 +16,5 @@
 
 # OS metadata
 .DS_Store
+._*
 Thumbs.db
