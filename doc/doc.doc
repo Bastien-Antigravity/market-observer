@@ -1,0 +1,80 @@
+System Architecture Schema - market-observer/cmd/test/main.go
+=========================================================================================
+
++-----------------------------------------------------------------------------------------+
+|                                  cmd/test/main.go                                       |
++-----------------------------------------------------------------------------------------+
+|                                                                                         |
+|  [ 1. INITIALIZATION ]                                                                  |
+|       |                                                                                 |
+|       v                                                                                 |
+|  +------------------+     +------------------+     +------------------+                 |
+|  |   Load Config    |---->|   Setup Logger   |---->|     Init DB      |                 |
+|  +------------------+     +------------------+     +------------------+                 |
+|                                                              |                          |
+|                                                              v                          |
+|  +------------------+     +------------------+     +------------------+                 |
+|  |  AnalysisFacade  |<----| YahooSource (DS) |<----|  NetworkManager  |                 |
+|  +------------------+     +------------------+     +------------------+                 |
+|       |                                                                                 |
+|       v                                                                                 |
+|  +------------------+                                                                   |
+|  |    APIServer     |                                                                   |
+|  +------------------+                                                                   |
+|                                                                                         |
+|                                                                                         |
+|  [ 2. INITIAL DATA LOAD ]                                                               |
+|       |                                                                                 |
+|       v                                                                                 |
+|  (DS.FetchInitialData) --> [ Raw Data ]                                                 |
+|       |                                                                                 |
+|       +---> [ MemoryManager ] (Populate)                                                |
+|       |                                                                                 |
+|       +---> [ Analyzer ] (Calculate History Stats & Aggregations)                       |
+|       |        |                                                                        |
+|       |        +---> DB.SaveIntermediateStats()                                         |
+|       |        +---> DB.SaveAggregations()                                              |
+|       |                                                                                 |
+|       +---> DB.SaveStockPricesBulk()                                                    |
+|       |                                                                                 |
+|       +---> srv.UpdateAllDatas(Snapshot)  [CRITICAL: Pre-populate Server State]         |
+|                                                                                         |
+|                                                                                         |
+|  [ 3. SERVER STARTUP (Async) ]                                                          |
+|       |                                                                                 |
+|       +---> go srv.Start()       (Port 8001: API & Websockets)                          |
+|       |                                                                                 |
+|       +---> go webserverTest()   (Port 8080: Static Dashboard)                          |
+|                                                                                         |
+|                                                                                         |
+|  [ 4. MAIN EVENT LOOP (Push Model) ]                                                    |
+|       |                                                                                 |
+|       v                                                                                 |
+|  (Source Channel) <----- [ Incoming Updates ]                                           |
+|       |                                                                                 |
+|       v                                                                                 |
+|  +-----------------------------------------------------------------------------------+  |
+|  |  Loop Cycle                                                                       |  |
+|  |                                                                                   |  |
+|  |  1. Raw Data Processing                                                           |  |
+|  |     Updates -> MemoryManager                                                      |  |
+|  |     Updates -> DB.SaveStockPricesBulk                                             |  |
+|  |                                                                                   |  |
+|  |  2. Real-time Aggregation                                                         |  |
+|  |     Analyzer.AggregateRealTime(Updates) -> [ Windowed Aggregations ]              |  |
+|  |     [ Windowed Aggregations ] -> DB.SaveAggregations                              |  |
+|  |                                                                                   |  |
+|  |  3. Metrics Calculation                                                           |  |
+|  |     Measure Time, ValidSymbols, WindowsProcessed                                  |  |
+|  |                                                                                   |  |
+|  |  4. Broadcast                                                                     |  |
+|  |     Payload = { Type: UPDATE, Raw, Aggs, Metrics }                                |  |
+|  |     srv.UpdateAllDatas(Payload)  --> [ Merges into Server State ]                 |  |
+|  |     srv.Broadcast(Payload)       --> [ Pushes to WebSocket Clients ]              |  |
+|  |                                                                                   |  |
+|  |  5. Maintenance                                                                   |  |
+|  |     DB.CleanupOldData()                                                           |  |
+|  +-----------------------------------------------------------------------------------+  |
+|       ^                                                                                 |
+|       | (Repeat)                                                                        |
++-------+---------------------------------------------------------------------------------+

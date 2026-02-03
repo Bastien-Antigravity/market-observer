@@ -1,0 +1,92 @@
+package datasource
+
+import (
+	"market-observer/src/logger"
+	"market-observer/src/models"
+	"sync"
+
+	tv "github.com/VictorVictini/tradingview-lib"
+)
+
+type TradingViewSource struct {
+	Config       *models.MConfig
+	SourceConfig models.MSourceConfig
+	Logger       *logger.Logger
+	Socket       *tv.Socket
+	mu           sync.Mutex
+}
+
+// -----------------------------------------------------------------------------
+
+func NewTradingViewSource(cfg *models.MConfig, sourceCfg models.MSourceConfig) *TradingViewSource {
+	// Initialize Socket
+	// Note: You might need to supply credentials if required by the library/service
+	// socket, err := tv.Connect(
+	// 	func(symbol string, data *tv.QuoteData) {
+	// 		// Callback for data updates, handled in ListenChan logic usually
+	// 		// But the library structure might require binding here.
+	// 		// We'll leave the callback mechanism for ListenChan to setup or just use generic hub.
+	// 	},
+	// 	func(err error, context string) {
+	// 		// Error handler
+	// 		fmt.Printf("TV Socket Error (%s): %v\n", context, err)
+	// 	},
+	// )
+
+	// if err != nil {
+	// 	// Log warning but return struct (might retry later)
+	// 	// For now, assume it works or panics in main if essential
+	// 	fmt.Printf("Error accessing TradingView lib: %v\n", err)
+	// }
+
+	// NOTE: Placeholder for actual implementation based on library version
+	// socket, err := tv.Connect(...)
+	// This requires verifying the library signature.
+
+	return &TradingViewSource{
+		Config:       cfg,
+		SourceConfig: sourceCfg,
+		Logger:       logger.NewLogger(nil, "TradingView-"+sourceCfg.Name),
+		Socket:       nil, // Placeholder
+	}
+}
+
+// -----------------------------------------------------------------------------
+
+// FetchInitialData retrieves history
+func (s *TradingViewSource) FetchInitialData() (map[string][]models.MStockPrice, error) {
+	// Stub: Return empty
+	return make(map[string][]models.MStockPrice), nil
+}
+
+// -----------------------------------------------------------------------------
+
+func (s *TradingViewSource) FetchUpdateData() (map[string][]models.MStockPrice, error) {
+	// Push model sources don't need manual update fetching usually
+	return map[string][]models.MStockPrice{}, nil
+}
+
+// -----------------------------------------------------------------------------
+
+func (s *TradingViewSource) ListenChan() <-chan map[string][]models.MStockPrice {
+	out := make(chan map[string][]models.MStockPrice, 100)
+
+	go func() {
+		// Subscribe to symbols
+		for _, sym := range s.SourceConfig.Symbols {
+			s.Socket.AddSymbol(sym)
+		}
+
+		// The library likely has a blocking loop or callback.
+		// If the Connect() callback is global, we need to bridge it to 'out'.
+		// Since Connect was in Constructor, I need to refactor to pass 'out' or use a bridge.
+	}()
+
+	return out
+}
+
+// -----------------------------------------------------------------------------
+
+func (s *TradingViewSource) IsRealTime() bool {
+	return true
+}

@@ -1,0 +1,75 @@
+syntax = "proto3";
+
+package control;
+
+option go_package = "./src/grpc_control";
+
+service MarketObserverControl {
+  // Update the list of symbols for a specific data source
+  rpc UpdateSymbols (UpdateSymbolsRequest) returns (UpdateSymbolsResponse);
+
+  // Start a specific data source
+  rpc StartSource (SourceControlRequest) returns (SourceControlResponse);
+
+  // Stop a specific data source
+  rpc StopSource (SourceControlRequest) returns (SourceControlResponse);
+
+  // List all available data sources
+  rpc ListSources (Empty) returns (ListSourcesResponse);
+
+  // Dynamically add a new data source
+  rpc AddSource (AddSourceRequest) returns (SourceControlResponse);
+
+  // Dynamically remove a data source
+  rpc RemoveSource (RemoveSourceRequest) returns (SourceControlResponse);
+}
+
+message ListSourcesResponse {
+  repeated SourceStatus sources = 1;
+}
+
+message AddSourceRequest {
+  string name = 1;
+  string type = 2; // e.g., "yahoo"
+  repeated string symbols = 3;
+  int32 update_interval_seconds = 4;
+}
+
+message RemoveSourceRequest {
+  string name = 1;
+}
+
+message UpdateSymbolsRequest {
+  string source_name = 1; // e.g., "yahoo"
+  repeated string symbols = 2; // New full list of symbols
+}
+
+message UpdateSymbolsResponse {
+  bool success = 1;
+  string message = 2;
+  int32 symbol_count = 3;
+}
+
+message SourceControlRequest {
+  string source_name = 1;
+}
+
+message SourceControlResponse {
+  bool success = 1;
+  string message = 2;
+  string current_state = 3; // "running", "stopped", "removed"
+}
+
+message Empty {}
+
+message StatusResponse {
+  repeated SourceStatus sources = 1;
+}
+
+message SourceStatus {
+  string name = 1;
+  bool is_running = 2;
+  int32 symbol_count = 3;
+  bool is_real_time = 4;
+  string type = 5;
+}
