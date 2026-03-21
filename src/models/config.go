@@ -12,12 +12,42 @@ type MConfig struct {
 	Network    MNetworkConfig    `yaml:"network"`
 	DataSource MDataSourceConfig `yaml:"data_source"`
 	WindowsAgg []string          `yaml:"windows_aggregation"`
+	Nats       MNATSConfig       `yaml:"nats"`
+}
+
+type MNATSConfig struct {
+	Servers         []string           `yaml:"servers"`
+	ClientID        string             `yaml:"client_id"`
+	ClusterID       string             `yaml:"cluster_id"`
+	Subject         string             `yaml:"subject"`
+	SubjectPrefix   string             `yaml:"subject_prefix"`
+	ConnectTimeout  string             `yaml:"connect_timeout"`
+	ReconnectWait   string             `yaml:"reconnect_wait"`
+	MaxReconnects   int                `yaml:"max_reconnects"`
+	FlushTimeout    string             `yaml:"flush_timeout"`
+	JetStream       MJetStreamConfig   `yaml:"jetstream"`
+}
+
+type MJetStreamConfig struct {
+	Enabled         bool     `yaml:"enabled"`
+	StreamName      string   `yaml:"stream_name"`
+	Subjects        []string `yaml:"subjects"`
+	Retention       string   `yaml:"retention"`
+	Storage         string   `yaml:"storage"`
+	Replicas        int      `yaml:"replicas"`
+	MaxAge          string   `yaml:"max_age"`
+	MaxMsgs         int      `yaml:"max_msgs"`
+	MaxBytes        int64    `yaml:"max_bytes"`
+	MaxMsgSize      int32    `yaml:"max_msg_size"`
+	DurableConsumer string   `yaml:"durable_consumer"`
+	AckWait         string   `yaml:"ack_wait"`
 }
 
 type MStorageConfig struct {
 	DBType             string `yaml:"db_type"`
 	DBPath             string `yaml:"db_path"`
 	DBConnectionString string `yaml:"db_connection_string"`
+	PostgresMode       string `yaml:"postgres_mode"` // "tick", "aggregated", "both"
 }
 
 type MNetworkConfig struct {

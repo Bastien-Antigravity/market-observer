@@ -2,14 +2,15 @@ package main
 
 import (
 	"fmt"
+	"net"
+	"net/http"
+	"os"
+
 	"market-observer/src/config"
 	datasource "market-observer/src/data_source"
 	pb "market-observer/src/grpc_control"
 	"market-observer/src/interfaces"
 	"market-observer/src/logger"
-	"net"
-	"net/http"
-	"os"
 
 	"google.golang.org/grpc"
 )
@@ -25,7 +26,6 @@ func startServers(
 	appLogger *logger.Logger,
 	networkManager interfaces.INetworkManager,
 ) {
-
 	// 1. FastAPIServer
 	go func() {
 		if err := srv.Start(); err != nil {
@@ -65,7 +65,7 @@ func startServers(
 func webserverTest(logger *logger.Logger) {
 	staticMux := http.NewServeMux()
 	staticMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		file := "market-observer.html"
+		file := "MarketObserver.html"
 		if _, err := os.Stat(file); os.IsNotExist(err) {
 			if _, err := os.Stat("src/server/" + file); err == nil {
 				file = "src/server/" + file

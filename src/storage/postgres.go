@@ -3,7 +3,7 @@ package storage
 import (
 	"database/sql"
 	"fmt"
-	"log"
+
 	"market-observer/src/logger"
 	"market-observer/src/models"
 	"os"
@@ -64,7 +64,7 @@ func (d *PostgresDB) Initialize() error {
 		return fmt.Errorf("failed to create schema %s: %w", d.Schema, err)
 	}
 
-	if err := d.recreateTables(); err != nil {
+	if err := d.createTables(); err != nil {
 		return err
 	}
 
@@ -86,16 +86,10 @@ func (d *PostgresDB) Initialize() error {
 
 // -----------------------------------------------------------------------------
 
-func (d *PostgresDB) recreateTables() error {
-	// Drop tables in reverse dependency order (though strict foreign keys aren't used here)
-	query := fmt.Sprintf(`DROP TABLE IF EXISTS "%s"."stock_prices";`, d.Schema)
-	if _, err := d.DB.Exec(query); err != nil {
-		return fmt.Errorf("failed to drop stock_prices: %w", err)
-	}
-
-	// Create stock_prices
-	query = fmt.Sprintf(`
-		CREATE TABLE "%s"."stock_prices" (
+func (d *PostgresDB) createTables() error {
+	// Create stock_prices_tick
+	query := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS "%s"."stock_prices_tick" (
 			symbol TEXT,
 			timestamp BIGINT,
 			price DOUBLE PRECISION,
@@ -106,19 +100,28 @@ func (d *PostgresDB) recreateTables() error {
 		);
 	`, d.Schema)
 	if _, err := d.DB.Exec(query); err != nil {
-		return fmt.Errorf("failed to create stock_prices: %w", err)
+		return fmt.Errorf("failed to create stock_prices_tick: %w", err)
+	}
+
+	// TimescaleDB Integration
+	// Note: We use 86400 seconds (1 day) chunk intervals for integer timestamps.
+	hyperQueryTick := fmt.Sprintf(`SELECT create_hypertable('"%s"."stock_prices_tick"', 'timestamp', chunk_time_interval => 86400, if_not_exists => TRUE);`, d.Schema)
+	if _, err := d.DB.Exec(hyperQueryTick); err != nil {
+		d.Logger.Info("TimescaleDB not detected or table already hypertable (stock_prices_tick): %v", err)
+	} else {
+		// Only try adding retention if create_hypertable succeeded
+		dropAfterSeconds := d.Config.DataSource.DataRetentionDays * 86400
+		retentionTick := fmt.Sprintf(`SELECT add_retention_policy('"%s"."stock_prices_tick"', drop_after => %d, if_not_exists => TRUE);`, d.Schema, dropAfterSeconds)
+		d.DB.Exec(retentionTick)
 	}
 
 	// Dynamic tables for each window
 	for _, w := range d.Config.WindowsAgg {
 		// Aggregations
 		aggTable := fmt.Sprintf(`"%s"."aggregations_%s"`, d.Schema, w)
-		if _, err := d.DB.Exec(fmt.Sprintf(`DROP TABLE IF EXISTS %s`, aggTable)); err != nil {
-			return fmt.Errorf("failed to drop %s: %w", aggTable, err)
-		}
 
 		query = fmt.Sprintf(`
-			CREATE TABLE %s (
+			CREATE TABLE IF NOT EXISTS %s (
 				symbol TEXT,
 				start_time BIGINT,
 				end_time BIGINT,
@@ -136,14 +139,18 @@ func (d *PostgresDB) recreateTables() error {
 			return fmt.Errorf("failed to create %s: %w", aggTable, err)
 		}
 
-		// Intermediate Stats
-		statsTable := fmt.Sprintf(`"%s"."intermediate_stats_%s"`, d.Schema, w)
-		if _, err := d.DB.Exec(fmt.Sprintf(`DROP TABLE IF EXISTS %s`, statsTable)); err != nil {
-			return fmt.Errorf("failed to drop %s: %w", statsTable, err)
+		hyperQueryAgg := fmt.Sprintf(`SELECT create_hypertable('%s', 'start_time', chunk_time_interval => 86400, if_not_exists => TRUE);`, aggTable)
+		if _, err := d.DB.Exec(hyperQueryAgg); err == nil {
+			dropAfterSeconds := d.Config.DataSource.DataRetentionDays * 86400
+			retentionAgg := fmt.Sprintf(`SELECT add_retention_policy('%s', drop_after => %d, if_not_exists => TRUE);`, aggTable, dropAfterSeconds)
+			d.DB.Exec(retentionAgg)
 		}
 
+		// Intermediate Stats
+		statsTable := fmt.Sprintf(`"%s"."intermediate_stats_%s"`, d.Schema, w)
+
 		query = fmt.Sprintf(`
-			CREATE TABLE %s (
+			CREATE TABLE IF NOT EXISTS %s (
 				symbol TEXT,
 				window_name TEXT,
 				avg_volume_history DOUBLE PRECISION,
@@ -161,12 +168,9 @@ func (d *PostgresDB) recreateTables() error {
 
 	// Create symbols table (Config/Metadata)
 	symbolsTable := fmt.Sprintf(`"%s"."symbols"`, d.Schema)
-	if _, err := d.DB.Exec(fmt.Sprintf(`DROP TABLE IF EXISTS %s`, symbolsTable)); err != nil {
-		return fmt.Errorf("failed to drop %s: %w", symbolsTable, err)
-	}
 
 	query = fmt.Sprintf(`
-		CREATE TABLE %s (
+		CREATE TABLE IF NOT EXISTS %s (
 			symbol TEXT PRIMARY KEY,
 			type TEXT,
 			ref_schema TEXT,
@@ -186,6 +190,11 @@ func (d *PostgresDB) recreateTables() error {
 // -----------------------------------------------------------------------------
 
 func (d *PostgresDB) SaveStockPricesBulk(prices []models.MStockPrice) error {
+	pMode := d.Config.Storage.PostgresMode
+	if pMode == "aggregated" {
+		return nil // Operating in aggregated mode, bypass raw tick insert
+	}
+
 	if len(prices) == 0 {
 		return nil
 	}
@@ -197,8 +206,9 @@ func (d *PostgresDB) SaveStockPricesBulk(prices []models.MStockPrice) error {
 	defer tx.Rollback()
 
 	query := fmt.Sprintf(`
-		INSERT INTO "%s"."stock_prices" (symbol, timestamp, price, volume, price_percent_change, volume_percent_change)
+		INSERT INTO "%s"."stock_prices_tick" (symbol, timestamp, price, volume, price_percent_change, volume_percent_change)
 		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT DO NOTHING
 	`, d.Schema)
 	stmt, err := tx.Prepare(query)
 	if err != nil {
@@ -219,6 +229,11 @@ func (d *PostgresDB) SaveStockPricesBulk(prices []models.MStockPrice) error {
 // -----------------------------------------------------------------------------
 
 func (d *PostgresDB) SaveAggregations(aggs map[string]map[string][]models.MAggregation) error {
+	pMode := d.Config.Storage.PostgresMode
+	if pMode == "tick" {
+		return nil // Operating in tick-only mode, bypass aggregated insert
+	}
+
 	tx, err := d.DB.Begin()
 	if err != nil {
 		return err
@@ -232,10 +247,10 @@ func (d *PostgresDB) SaveAggregations(aggs map[string]map[string][]models.MAggre
 			}
 			tableName := fmt.Sprintf(`"%s"."aggregations_%s"`, d.Schema, w)
 
-			// Simple loop insert for now. Copy would be faster but more complex to setup.
 			query := fmt.Sprintf(`
 				INSERT INTO %s (symbol, start_time, end_time, open, high, low, close, volume, price_percent_change, volume_percent_change)
 				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+				ON CONFLICT DO NOTHING
 			`, tableName)
 
 			stmt, err := tx.Prepare(query)
@@ -316,24 +331,8 @@ func (d *PostgresDB) SaveIntermediateStats(stats []models.MIntermediateStats) er
 // -----------------------------------------------------------------------------
 
 func (d *PostgresDB) CleanupOldData() error {
-	retentionDays := d.Config.DataSource.DataRetentionDays
-	cutoff := time.Now().UTC().AddDate(0, 0, -retentionDays).Unix()
-
-	log.Printf("Cleaning up data older than %d days (timestamp < %d)...", retentionDays, cutoff)
-
-	// Clean stock_prices
-	if _, err := d.DB.Exec(fmt.Sprintf(`DELETE FROM "%s"."stock_prices" WHERE timestamp < $1`, d.Schema), cutoff); err != nil {
-		log.Printf("Cleanup stock_prices error: %v", err)
-	}
-
-	// Clean aggregation tables
-	for _, w := range d.Config.WindowsAgg {
-		tableName := fmt.Sprintf(`"%s"."aggregations_%s"`, d.Schema, w)
-		if _, err := d.DB.Exec(fmt.Sprintf("DELETE FROM %s WHERE end_time < $1", tableName), cutoff); err != nil {
-			log.Printf("Cleanup %s error: %v", tableName, err)
-		}
-	}
-
+	// TimescaleDB's native retention policies (add_retention_policy) handle this automatically.
+	// We no longer trigger manual DELETE sequences for Postgres.
 	return nil
 }
 

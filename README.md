@@ -61,7 +61,8 @@ The system is architected around a **5-minute base resolution**.
 ## 🚀 Standard Documentation
 
 ### Features
-- **Multi-Source Architecture**: Ingest data from Yahoo Finance, Interactive Brokers, or any custom source simultaneously using the `MultiSourceManager`.
+- **Multi-Source Architecture**: Ingest data from Yahoo Finance, NATS Streaming, or any custom source simultaneously using the `MultiSourceManager` or Factory Pattern.
+- **Database Persistence**: Supports fully automated **TimescaleDB** (PostgreSQL) integration, including native Hypertables and data retention policies, as well as SQLite.
 - **High Performance**:
     - **Go Concurrency**: Heavy use of Goroutines and Channels for non-blocking I/O.
     - **Context-Managed Lifecycle**: Graceful shutdown and signal propagation using `context.Context`.
@@ -73,6 +74,7 @@ The system is architected around a **5-minute base resolution**.
 - **`cmd/test/`**: Application entry point and setup.
 - **`src/data_source/`**: Data ingestion layer.
     - `YahooFinanceSource`: Polling-based source example.
+    - `NATSDataSource`: Real-time push-based streaming via NATS.
     - `MultiSourceManager`: Fan-in aggregator for all sources.
 - **`src/analysis/`**: Business logic.
     - `core/`: Pure functions for math/stats.
@@ -91,9 +93,24 @@ go run main.go setup.go bootstrap.go servers.go core_processing.go --config ../.
 ### Configuration
 Managed via `config/default.yaml`.
 ```yaml
+storage:
+  db_type: postgres
+  postgres_mode: both # "tick", "aggregated", or "both"
+  db_connection_string: postgresql://user:password@localhost/dbname
+
 data_source:
   update_interval_seconds: 300 # 5 minutes
-  yahoo:
-    enabled: true
-    symbols: ["AAPL", "NVDA", "MSFT"]
+  sources:
+    - name: "Yahoo Finance"
+      type: "yahoo"
+      enabled: true
+      symbols: ["AAPL", "NVDA", "MSFT"]
+    - name: "NATS Stream"
+      type: "nats"
+      enabled: false
+      symbols: []
+
+nats:
+  servers: ["nats://127.0.0.1:4222"]
+  subject: "tick.raw"
 ```

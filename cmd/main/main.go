@@ -13,6 +13,7 @@ import (
 
 	"market-observer/src/analysis"
 	"market-observer/src/config"
+	"market-observer/src/data_source"
 	"market-observer/src/data_source/yahoo"
 	"market-observer/src/interfaces"
 	"market-observer/src/logger"
@@ -91,6 +92,8 @@ func main() {
 	switch sourceType {
 	case "yahoo":
 		source = yahoo.NewYahooFinanceSource(config.MConfig, *activeSourceConfig, networkManage)
+	case "nats":
+		source = datasource.NewNATSDataSource(config.MConfig, *activeSourceConfig, appLogger)
 	default:
 		appLogger.Critical("Unknown data source type: %s for source: %s", sourceType, activeSourceConfig.Name)
 		os.Exit(1)
