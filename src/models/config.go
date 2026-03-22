@@ -16,16 +16,16 @@ type MConfig struct {
 }
 
 type MNATSConfig struct {
-	Servers         []string           `yaml:"servers"`
-	ClientID        string             `yaml:"client_id"`
-	ClusterID       string             `yaml:"cluster_id"`
-	Subject         string             `yaml:"subject"`
-	SubjectPrefix   string             `yaml:"subject_prefix"`
-	ConnectTimeout  string             `yaml:"connect_timeout"`
-	ReconnectWait   string             `yaml:"reconnect_wait"`
-	MaxReconnects   int                `yaml:"max_reconnects"`
-	FlushTimeout    string             `yaml:"flush_timeout"`
-	JetStream       MJetStreamConfig   `yaml:"jetstream"`
+	Servers        []string         `yaml:"servers"`
+	ClientID       string           `yaml:"client_id"`
+	ClusterID      string           `yaml:"cluster_id"`
+	Subject        string           `yaml:"subject"`
+	SubjectPrefix  string           `yaml:"subject_prefix"`
+	ConnectTimeout string           `yaml:"connect_timeout"`
+	ReconnectWait  string           `yaml:"reconnect_wait"`
+	MaxReconnects  int              `yaml:"max_reconnects"`
+	FlushTimeout   string           `yaml:"flush_timeout"`
+	JetStream      MJetStreamConfig `yaml:"jetstream"`
 }
 
 type MJetStreamConfig struct {
@@ -47,6 +47,7 @@ type MStorageConfig struct {
 	DBType             string `yaml:"db_type"`
 	DBPath             string `yaml:"db_path"`
 	DBConnectionString string `yaml:"db_connection_string"`
+	EnableSSL          bool   `yaml:"enable_ssl"`
 	PostgresMode       string `yaml:"postgres_mode"` // "tick", "aggregated", "both"
 }
 

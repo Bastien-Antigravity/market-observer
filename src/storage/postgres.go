@@ -3,13 +3,13 @@ package storage
 import (
 	"database/sql"
 	"fmt"
-
-	"market-observer/src/logger"
-	"market-observer/src/models"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"market-observer/src/logger"
+	"market-observer/src/models"
 
 	_ "github.com/lib/pq"
 )
@@ -48,6 +48,21 @@ func NewPostgresDB(cfg *models.MConfig, log *logger.Logger) (*PostgresDB, error)
 
 func (d *PostgresDB) Initialize() error {
 	dsn := d.Config.Storage.DBConnectionString
+	
+	// Append sslmode if not already defined in the connection string
+	if strings.Contains(dsn, "postgresql://") && !strings.Contains(dsn, "sslmode=") {
+		sslMode := "disable"
+		if d.Config.Storage.EnableSSL {
+			sslMode = "require"
+		}
+		
+		separator := "?"
+		if strings.Contains(dsn, "?") {
+			separator = "&"
+		}
+		dsn = fmt.Sprintf("%s%ssslmode=%s", dsn, separator, sslMode)
+	}
+
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
 		return err
@@ -331,8 +346,32 @@ func (d *PostgresDB) SaveIntermediateStats(stats []models.MIntermediateStats) er
 // -----------------------------------------------------------------------------
 
 func (d *PostgresDB) CleanupOldData() error {
-	// TimescaleDB's native retention policies (add_retention_policy) handle this automatically.
-	// We no longer trigger manual DELETE sequences for Postgres.
+	// TimescaleDB's native retention policies handle this automatically if active.
+	// However, if running purely on standard PostgreSQL, we need a manual fallback to prevent bloat.
+	// Executing these DELETEs on a TimescaleDB instance is basically a no-op if retention already fired.
+	
+	retentionDays := d.Config.DataSource.DataRetentionDays
+	if retentionDays <= 0 {
+		return nil // Safety check
+	}
+	
+	cutoffTime := time.Now().UTC().AddDate(0, 0, -retentionDays).Unix()
+	
+	// 1. Clean stock_prices_tick
+	queryTick := fmt.Sprintf(`DELETE FROM "%s"."stock_prices_tick" WHERE timestamp < $1`, d.Schema)
+	if _, err := d.DB.Exec(queryTick, cutoffTime); err != nil {
+		d.Logger.Error("PostgresDB: Failed to cleanup stock_prices_tick: %v", err)
+	}
+
+	// 2. Clean aggregation windows
+	for _, w := range d.Config.WindowsAgg {
+		aggTable := fmt.Sprintf(`"%s"."aggregations_%s"`, d.Schema, w)
+		queryAgg := fmt.Sprintf(`DELETE FROM %s WHERE start_time < $1`, aggTable)
+		if _, err := d.DB.Exec(queryAgg, cutoffTime); err != nil {
+			d.Logger.Error("PostgresDB: Failed to cleanup %s: %v", aggTable, err)
+		}
+	}
+	
 	return nil
 }
 

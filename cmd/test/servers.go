@@ -11,8 +11,11 @@ import (
 	pb "market-observer/src/grpc_control"
 	"market-observer/src/interfaces"
 	"market-observer/src/logger"
+	"market-observer/src/rest"
+	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // -----------------------------------------------------------------------------
@@ -55,6 +58,37 @@ func startServers(
 		appLogger.Info("Starting gRPC Control Server on :%d", port)
 		if err := grpcServer.Serve(lis); err != nil {
 			appLogger.Critical("failed to serve gRPC: %v", err)
+		}
+	}()
+
+	// 4. REST Control Server (gRPC Proxy)
+	go func() {
+		port := config.GrpcPort
+		if port == 0 {
+			port = 50051 // Default fallback
+		}
+		
+		// Wait briefly to ensure gRPC server is listening
+		time.Sleep(1 * time.Second)
+
+		// Create gRPC client
+		conn, err := grpc.Dial(fmt.Sprintf("localhost:%d", port), grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err != nil {
+			appLogger.Error("Failed to dial gRPC for REST gateway: %v", err)
+			return
+		}
+		// Connection remains open for the lifetime of the server
+
+		client := pb.NewMarketObserverControlClient(conn)
+		restLogger := logger.NewLogger(config, "RestHandler")
+		restHandler := rest.NewRestHandler(client, restLogger)
+
+		restMux := http.NewServeMux()
+		restHandler.RegisterEndpoints(restMux)
+
+		appLogger.Info("Starting REST Control Server on :8081")
+		if err := http.ListenAndServe(":8081", restMux); err != nil {
+			appLogger.Error("REST Control Server failed: %v", err)
 		}
 	}()
 }

@@ -4,14 +4,15 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"os"
+	"sync"
+
 	"market-observer/src/config"
 	"market-observer/src/helpers"
 	"market-observer/src/logger"
 	"market-observer/src/models"
 	"market-observer/src/server"
 	"market-observer/src/utils"
-	"os"
-	"sync"
 )
 
 func main() {

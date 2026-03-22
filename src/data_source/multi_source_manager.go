@@ -311,13 +311,8 @@ func (m *MultiSourceManager) IsRealTime() bool {
 		}
 
 		if isRT != firstStatus {
-			// Construct detailed error message
-			msg := "Data Source Incompatibility Detected :\n"
-			msg += fmt.Sprintf("Source '%s' has IsRealTime=%v, but source '%s' has IsRealTime=%v.\n", firstSource, firstStatus, name, isRT)
-			msg += "Program cannot continue with mixed Real-Time and Delayed sources as it causes data corruption."
-
 			// Log critical and exit
-			m.Logger.Critical(msg)
+			m.Logger.Critical("Data Source Incompatibility Detected :\nSource '%s' has IsRealTime=%v, but source '%s' has IsRealTime=%v.\nProgram cannot continue with mixed Real-Time and Delayed sources as it causes data corruption.", firstSource, firstStatus, name, isRT)
 			return false // Unreachable due to os.Exit in Critical, but satisfied signature
 		}
 	}

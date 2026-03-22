@@ -10,7 +10,8 @@ storage:
   db_path: market-observer.db
   # DB source list for symbol to fetch/follow
   # example: "schema.table.field"
-  db_connection_string: postgresql://user:password@localhost/dbname
+  db_connection_string: postgresql://dbuser:dbuser@127.0.0.1:5432/maindb
+  enable_ssl: false
   postgres_mode: both
 
 # --- NATS CONNECTION & JETSTREAM CONFIGURATION ---
@@ -81,6 +82,11 @@ data_source:
   data_retention_days: 7
   update_interval_seconds: 300
   sources:
+    # Example TradingView connector
+    #- name: "TradingView Stream"
+    #  type: "trading_view"
+    #  enabled: true
+    #  symbols: ["AAPL", "NVDA"]
     # Example NATS Streaming connector (ensure only ONE source is enabled)
     # - name: "NATS Stream"
     #   type: "nats"

@@ -97,7 +97,7 @@ func (c *Config) Validate() error {
 		if src.Name == "" {
 			return fmt.Errorf("source %d must have a name", i)
 		}
-		if len(src.Symbols) == 0 {
+		if len(src.Symbols) == 0 && src.Type != "nats" && src.Type != "trading_view" {
 			return fmt.Errorf("source '%s' must have at least one symbol", src.Name)
 		}
 	}

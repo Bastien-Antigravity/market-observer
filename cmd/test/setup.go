@@ -6,6 +6,7 @@ import (
 
 	"market-observer/src/analysis"
 	datasource "market-observer/src/data_source"
+	"market-observer/src/data_source/trading_view"
 	"market-observer/src/data_source/yahoo"
 	"market-observer/src/interfaces"
 	"market-observer/src/logger"
@@ -59,17 +60,31 @@ func setupDataSources(config *models.MConfig, appLogger *logger.Logger, networkM
 
 	// Symbol Filtering
 	for _, srcCfg := range config.DataSource.Sources {
-		if len(srcCfg.Symbols) > 0 {
-			if srcCfg.Type == "yahoo" {
-				s := yahoo.NewYahooFinanceSource(config, srcCfg, networkManage)
-				sources = append(sources, s)
-				appLogger.Info("Added source: %s with %d symbols (IsRealTime: %v)", srcCfg.Name, len(srcCfg.Symbols), s.IsRealTime())
-			} else {
-				appLogger.Warning("Unknown source type in config: %s", srcCfg.Name)
-			}
-		} else {
-			appLogger.Info("Source %s: No classic symbols to fetch from provider.", srcCfg.Name)
+		if !srcCfg.Enabled {
+			continue
 		}
+
+		var s interfaces.IDataSource
+
+		switch srcCfg.Type {
+		case "yahoo":
+			if len(srcCfg.Symbols) > 0 {
+				s = yahoo.NewYahooFinanceSource(config, srcCfg, networkManage)
+			} else {
+				appLogger.Info("Source %s: No classic symbols to fetch from provider.", srcCfg.Name)
+				continue
+			}
+		case "nats":
+			s = datasource.NewNATSDataSource(config, srcCfg, appLogger)
+		case "trading_view":
+			s = trading_view.NewTradingViewSource(config, srcCfg, appLogger)
+		default:
+			appLogger.Warning("Unknown source type in config: %s", srcCfg.Name)
+			continue
+		}
+
+		sources = append(sources, s)
+		appLogger.Info("Added source: %s with %d symbols (IsRealTime: %v)", srcCfg.Name, len(srcCfg.Symbols), s.IsRealTime())
 	}
 
 	if len(sources) == 0 {
