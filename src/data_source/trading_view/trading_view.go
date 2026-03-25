@@ -2,11 +2,11 @@ package trading_view
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
 	"market-observer/src/interfaces"
-	"market-observer/src/logger"
 	"market-observer/src/models"
 
 	tv "github.com/VictorVictini/tradingview-lib"
@@ -15,14 +15,15 @@ import (
 type TradingViewSource struct {
 	Config       *models.MConfig
 	SourceConfig models.MSourceConfig
-	Logger       *logger.Logger
+	Logger       interfaces.Logger
 	api          *tv.API
 	symbols      []string
+	isRunning    bool
 }
 
 // -----------------------------------------------------------------------------
 
-func NewTradingViewSource(cfg *models.MConfig, sourceCfg models.MSourceConfig, logger *logger.Logger) interfaces.IDataSource {
+func NewTradingViewSource(cfg *models.MConfig, sourceCfg models.MSourceConfig, logger interfaces.Logger) interfaces.IDataSource {
 	return &TradingViewSource{
 		Config:       cfg,
 		SourceConfig: sourceCfg,
@@ -41,6 +42,14 @@ func (s *TradingViewSource) Name() string {
 
 func (s *TradingViewSource) IsRealTime() bool {
 	return true
+}
+
+func (s *TradingViewSource) Type() string {
+	return "tradingview"
+}
+
+func (s *TradingViewSource) IsRunning() bool {
+	return s.isRunning
 }
 
 // -----------------------------------------------------------------------------
@@ -75,13 +84,14 @@ func (s *TradingViewSource) Start(ctx context.Context, outputChan chan<- map[str
 	api.Channels.Read = make(chan map[string]interface{}, 1000)
 	api.Channels.Error = make(chan error, 100)
 	s.api = api
+	s.isRunning = true
 
-	wg.Add(1)
+	// The first goroutine uses the wg.Add(1) already called by the caller (MultiSourceManager)
 	go func() {
 		defer wg.Done()
 		err := s.api.OpenConnection(nil)
 		if err != nil {
-			s.Logger.Error("TradingView connection error: %v", err)
+			s.Logger.Error(fmt.Sprintf("TradingView connection error: %v", err))
 		}
 	}()
 
@@ -90,7 +100,7 @@ func (s *TradingViewSource) Start(ctx context.Context, outputChan chan<- map[str
 		time.Sleep(2 * time.Second)
 		if len(s.symbols) > 0 {
 			s.api.AddRealtimeSymbols(s.symbols)
-			s.Logger.Info("[%s] Connected to TradingView & subscribed to: %v", s.Name(), s.symbols)
+			s.Logger.Info(fmt.Sprintf("[%s] Connected to TradingView & subscribed to: %v", s.Name(), s.symbols))
 		}
 	}()
 
@@ -103,7 +113,7 @@ func (s *TradingViewSource) Start(ctx context.Context, outputChan chan<- map[str
 				s.Stop()
 				return
 			case err := <-s.api.Channels.Error:
-				s.Logger.Error("TradingView Channel Error: %v", err)
+				s.Logger.Error(fmt.Sprintf("TradingView Channel Error: %v", err))
 			case data := <-s.api.Channels.Read:
 				if data["type"] == "realtime" {
 					sym, ok := data["symbol"].(string)
@@ -131,7 +141,12 @@ func (s *TradingViewSource) Start(ctx context.Context, outputChan chan<- map[str
 
 					dataMap := make(map[string][]models.MStockPrice)
 					dataMap[sym] = []models.MStockPrice{tick}
-					outputChan <- dataMap
+					
+					select {
+					case outputChan <- dataMap:
+					case <-ctx.Done():
+						return
+					}
 				}
 			}
 		}
@@ -143,9 +158,10 @@ func (s *TradingViewSource) Start(ctx context.Context, outputChan chan<- map[str
 // -----------------------------------------------------------------------------
 
 func (s *TradingViewSource) Stop() error {
+	s.isRunning = false
 	if s.api != nil && len(s.symbols) > 0 {
 		s.api.RemoveRealtimeSymbols(s.symbols)
 	}
-	s.Logger.Info("[%s] Connection stopped", s.Name())
+	s.Logger.Info(fmt.Sprintf("[%s] Connection stopped", s.Name()))
 	return nil
 }

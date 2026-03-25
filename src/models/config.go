@@ -49,6 +49,7 @@ type MStorageConfig struct {
 	DBConnectionString string `yaml:"db_connection_string"`
 	EnableSSL          bool   `yaml:"enable_ssl"`
 	PostgresMode       string `yaml:"postgres_mode"` // "tick", "aggregated", "both"
+	Reset              bool   `yaml:"reset"`         // If true, drops schema/file on boot
 }
 
 type MNetworkConfig struct {

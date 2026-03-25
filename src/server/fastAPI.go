@@ -5,7 +5,7 @@ import (
 	"strings"
 	"sync"
 
-	"market-observer/src/logger"
+	"market-observer/src/interfaces"
 	"market-observer/src/models"
 
 	"github.com/gin-gonic/gin"
@@ -17,7 +17,7 @@ import (
 
 type FastAPIServer struct {
 	Config *models.MConfig
-	Logger *logger.Logger
+	Logger interfaces.Logger
 	engine *gin.Engine
 
 	// WebSocket clients
@@ -35,7 +35,7 @@ type FastAPIServer struct {
 // Constructor
 // -----------------------------------------------------------------------------
 
-func NewFastAPIServer(cfg *models.MConfig, logger *logger.Logger) *FastAPIServer {
+func NewFastAPIServer(cfg *models.MConfig, logger interfaces.Logger) *FastAPIServer {
 	// Set Gin mode
 	if cfg.LogLevel != "DEBUG" {
 		gin.SetMode(gin.ReleaseMode)
@@ -103,7 +103,7 @@ func (s *FastAPIServer) setupRoutes() {
 
 func (s *FastAPIServer) Start() error {
 	addr := fmt.Sprintf("%s:%d", s.Config.Host, s.Config.Port)
-	s.Logger.Info("Starting server on %s", addr)
+	s.Logger.Info(fmt.Sprintf("Starting server on %s", addr))
 
 	go s.handleWebsockets()
 

@@ -1,11 +1,12 @@
 package utils
 
 import (
+	"fmt"
 	"runtime"
 	"runtime/debug"
 	"sync"
 
-	"market-observer/src/logger"
+	"market-observer/src/interfaces"
 	"market-observer/src/models"
 )
 
@@ -17,18 +18,18 @@ type MemoryManager struct {
 	DataStreams   map[string]*RingBuffer // Changed to RingBuffer
 	MaxMemoryMB   int
 	MaxDataPoints int
-	Logger        *logger.Logger
+	Logger        interfaces.Logger
 	mu            sync.RWMutex // Add mutex for thread safety
 }
 
 // -----------------------------------------------------------------------------
 
-func NewMemoryManager(maxMemoryMB, maxDataPoints int) *MemoryManager {
+func NewMemoryManager(maxMemoryMB, maxDataPoints int, l interfaces.Logger) *MemoryManager {
 	return &MemoryManager{
 		DataStreams:   make(map[string]*RingBuffer), // Changed type
 		MaxMemoryMB:   maxMemoryMB,
 		MaxDataPoints: maxDataPoints,
-		Logger:        logger.NewLogger(nil, "MemoryManager"),
+		Logger:        l,
 	}
 }
 
@@ -50,13 +51,6 @@ func (mm *MemoryManager) AddDataPoint(symbol string, data models.MStockPrice) {
 	if mm.DataStreams[symbol].Size()%100 == 0 {
 		mm.CheckMemoryLimits()
 	}
-}
-
-// -----------------------------------------------------------------------------
-
-// AddStockDataPoint adds a structured data point (Wrapper - kept for backwards compt if needed, but redirects)
-func (mm *MemoryManager) AddStockDataPoint(symbol string, data models.MStockPrice) {
-	mm.AddDataPoint(symbol, data)
 }
 
 // -----------------------------------------------------------------------------
@@ -158,8 +152,8 @@ func (mm *MemoryManager) CheckMemoryLimits() {
 	currentMemory := mm.GetProcessMemoryMB()
 
 	if currentMemory > float64(mm.MaxMemoryMB) {
-		mm.Logger.Info("Memory usage %.1fMB exceeds limit %dMB. Cleaning up.",
-			currentMemory, mm.MaxMemoryMB)
+		mm.Logger.Info(fmt.Sprintf("Memory usage %.1fMB exceeds limit %dMB. Cleaning up.",
+			currentMemory, mm.MaxMemoryMB))
 
 		// Reduce data retention by half to free memory (matches Python)
 		mm.mu.Lock()

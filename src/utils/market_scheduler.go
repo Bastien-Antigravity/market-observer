@@ -1,21 +1,22 @@
 package utils
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
-	"market-observer/src/logger"
+	"market-observer/src/interfaces"
 )
 
 type MarketScheduler struct {
 	Calendars map[string]*TradingCalendar
-	Logger    *logger.Logger
+	Logger    interfaces.Logger
 	mu        sync.RWMutex
 }
 
 // -----------------------------------------------------------------------------
 
-func NewMarketScheduler(symbols []string, l *logger.Logger) *MarketScheduler {
+func NewMarketScheduler(symbols []string, l interfaces.Logger) *MarketScheduler {
 	ms := &MarketScheduler{
 		Calendars: make(map[string]*TradingCalendar),
 		Logger:    l,
@@ -45,7 +46,7 @@ func (ms *MarketScheduler) MapSymbolsToCalendars(symbols []string) {
 			ms.Calendars[symbol] = cal
 		} else {
 			// Create new and cache it
-			cal := GetCalendarByMic(mic)
+			cal := GetCalendarByMic(mic, ms.Logger)
 			if cal != nil {
 				micCache[mic] = cal
 				ms.Calendars[symbol] = cal
@@ -59,8 +60,8 @@ func (ms *MarketScheduler) MapSymbolsToCalendars(symbols []string) {
 		uniqueCals[cal] = true
 	}
 
-	ms.Logger.Info("MarketScheduler: Mapped %d symbols to %d unique calendars.",
-		len(symbols), len(uniqueCals))
+	ms.Logger.Info(fmt.Sprintf("MarketScheduler: Mapped %d symbols to %d unique calendars.",
+		len(symbols), len(uniqueCals)))
 }
 
 // -----------------------------------------------------------------------------

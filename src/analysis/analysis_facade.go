@@ -1,9 +1,11 @@
 package analysis
 
 import (
-	"market-observer/src/logger"
+	"fmt"
 	"sort"
 	"time"
+
+	"market-observer/src/interfaces"
 
 	"market-observer/src/analysis/core"
 	"market-observer/src/models"
@@ -12,12 +14,12 @@ import (
 type AnalysisFacade struct {
 	Config            *models.MConfig
 	WindowsSecondsMap map[string]int64 // Need to add this to config
-	Logger            *logger.Logger
+	Logger            interfaces.Logger
 }
 
 // -----------------------------------------------------------------------------
 
-func NewAnalysisFacade(cfg *models.MConfig, log *logger.Logger) *AnalysisFacade {
+func NewAnalysisFacade(cfg *models.MConfig, log interfaces.Logger) *AnalysisFacade {
 	// Initialize window mapping (should come from config)
 	windowsMap := make(map[string]int64)
 	for _, window := range cfg.WindowsAgg {
@@ -42,12 +44,11 @@ func (a *AnalysisFacade) AggregateRealTime(
 	windowName string,
 	intermediateStats map[string]models.MIntermediateStats,
 ) map[string]map[string]models.MAggregation {
-
 	results := make(map[string]map[string]models.MAggregation)
 
 	windowSeconds, ok := a.WindowsSecondsMap[windowName]
 	if !ok {
-		a.Logger.Error("Invalid window name %s", windowName)
+		a.Logger.Error(fmt.Sprintf("Invalid window name %s", windowName))
 		return results
 	}
 
@@ -163,7 +164,6 @@ func (a *AnalysisFacade) AggregateHistorical(
 	windowName string,
 	intermediateStats map[string]models.MIntermediateStats,
 ) map[string]map[string][]models.MAggregation {
-
 	results := make(map[string]map[string][]models.MAggregation)
 
 	windowSeconds, ok := a.WindowsSecondsMap[windowName]
@@ -278,7 +278,6 @@ func (a *AnalysisFacade) CalculateStatsForWindows(
 	data map[string][]models.MStockPrice,
 	windowNames []string,
 ) map[string]map[string]models.MIntermediateStats {
-
 	results := make(map[string]map[string]models.MIntermediateStats)
 
 	// Filter valid windows
@@ -340,25 +339,4 @@ func (a *AnalysisFacade) CalculateStatsForWindows(
 	}
 
 	return results
-}
-
-// -----------------------------------------------------------------------------
-
-// Helper method matching Python's convert_to_numpy_matrix
-func ConvertToMatrix(data []models.MStockPrice) [][]float64 {
-	if len(data) == 0 {
-		return [][]float64{}
-	}
-
-	// Sort by timestamp
-	sort.Slice(data, func(i, j int) bool {
-		return data[i].Timestamp < data[j].Timestamp
-	})
-
-	matrix := make([][]float64, len(data))
-	for i, p := range data {
-		matrix[i] = []float64{float64(p.Timestamp), p.Price, p.Volume}
-	}
-
-	return matrix
 }

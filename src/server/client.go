@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -11,7 +12,7 @@ import (
 // -----------------------------------------------------------------------------
 
 const (
-	writeWait      = 2 * time.Second
+	writeWait      = 10 * time.Second
 	pongWait       = 60 * time.Second
 	pingPeriod     = (pongWait * 9) / 10
 	maxMessageSize = 1024 * 1024 // 1MB for larger JSON messages
@@ -50,7 +51,7 @@ func (c *Client) readPump() {
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				c.hub.Logger.Info("WebSocket error: %v", err)
+				c.hub.Logger.Info(fmt.Sprintf("WebSocket error: %v", err))
 			}
 			break
 		}
@@ -82,7 +83,7 @@ func (c *Client) writePump() {
 
 			// Write JSON message
 			if err := c.conn.WriteJSON(message); err != nil {
-				c.hub.Logger.Info("Write error: %v", err)
+				c.hub.Logger.Info(fmt.Sprintf("Write error: %v", err))
 				return
 			}
 

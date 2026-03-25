@@ -1,30 +1,30 @@
 package main
 
 import (
+	"fmt"
 	"time"
 
 	"market-observer/src/analysis"
 	"market-observer/src/interfaces"
-	"market-observer/src/logger"
 	"market-observer/src/models"
 	"market-observer/src/utils"
 )
 
-// performInitialLoad fetches initial data appropriately
+// performInitialLoad fetches initial data and prepares the system state
 func performInitialLoad(
 	source interfaces.IDataSource,
 	db interfaces.IDatabase,
 	analyzer *analysis.AnalysisFacade,
 	memManager *utils.MemoryManager,
 	config *models.MConfig,
-	appLogger *logger.Logger,
-	srv interfaces.IDataExchanger,
-) (map[string]map[string]models.MIntermediateStats, error) {
-
+	appLogger interfaces.Logger,
+) (map[string]interface{}, map[string]map[string]models.MIntermediateStats, error) {
 	appLogger.Info("Fetching initial data...")
 	initialData, err := source.FetchInitialData()
 	if err != nil {
-		appLogger.Warning("Initial fetch failed: %v", err)
+		appLogger.Warning(fmt.Sprintf("Initial fetch failed: %v", err))
+		// We continue even if fail, potentially? Or return error.
+		// Original code warned but continued.
 	}
 
 	// Populate Memory Manager with initial data
@@ -37,13 +37,16 @@ func performInitialLoad(
 	// Initial Processing and Aggregation
 	intermediateStats := make(map[string]map[string]models.MIntermediateStats)
 	initialAggsForServer := make(map[string]map[string][]models.MAggregation)
+	initialValidSymbols := len(initialData)
 
 	// Process per window
 	wStatsMap := analyzer.CalculateStatsForWindows(initialData, config.WindowsAgg)
 
 	for _, w := range config.WindowsAgg {
+		// Save stats
 		var statsList []models.MIntermediateStats
 
+		// Extract stats for this window from the bulk result
 		for sym := range initialData {
 			if symStats, ok := wStatsMap[sym]; ok {
 				if s, ok := symStats[w]; ok {
@@ -60,6 +63,8 @@ func performInitialLoad(
 			db.SaveIntermediateStats(statsList)
 		}
 
+		// Initial Aggregation
+		// Extract stats for this window
 		currentWindowStats := make(map[string]models.MIntermediateStats)
 		for sym, wMap := range intermediateStats {
 			if s, ok := wMap[w]; ok {
@@ -69,6 +74,7 @@ func performInitialLoad(
 
 		aggs := analyzer.AggregateHistorical(initialData, w, currentWindowStats)
 
+		// Save Aggs & Buffer for Server
 		aggMap := make(map[string]map[string][]models.MAggregation)
 		for sym, innerMap := range aggs {
 			if aggMap[sym] == nil {
@@ -81,6 +87,7 @@ func performInitialLoad(
 			if candles, ok := innerMap[w]; ok {
 				aggMap[sym][w] = append(aggMap[sym][w], candles...)
 
+				// Capture Latest Candle for server state
 				if len(candles) > 0 {
 					latest := candles[len(candles)-1]
 					initialAggsForServer[sym][w] = []models.MAggregation{latest}
@@ -99,7 +106,7 @@ func performInitialLoad(
 
 	appLogger.Info("Initialization complete.")
 
-	// Send Initial Data to Server State
+	// Construct Initial Payload
 	initialRawMap := make(map[string]interface{})
 	for sym, list := range initialData {
 		if len(list) > 0 {
@@ -108,13 +115,16 @@ func performInitialLoad(
 	}
 
 	initialPayload := map[string]interface{}{
-		"type":               "INITIAL",
-		"raw_data":           initialRawMap,
-		"aggregations":       initialAggsForServer,
-		"timestamp":          time.Now().Unix(),
-		"processing_metrics": map[string]interface{}{},
+		"type":         "INITIAL", // Mark as INITIAL
+		"raw_data":     initialRawMap,
+		"aggregations": initialAggsForServer,
+		"timestamp":    time.Now().UTC().Unix(),
+		"processing_metrics": models.MProcessingMetrics{
+			AggregationTimeSeconds: 0,
+			ValidSymbols:           initialValidSymbols,
+			WindowsProcessed:       len(config.WindowsAgg),
+		},
 	}
-	srv.UpdateAllDatas(initialPayload)
 
-	return intermediateStats, nil
+	return initialPayload, intermediateStats, nil
 }

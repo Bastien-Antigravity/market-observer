@@ -1,22 +1,23 @@
 package main
 
 import (
+	"fmt"
 	"os"
-	"strings"
 
 	"market-observer/src/analysis"
 	datasource "market-observer/src/data_source"
 	"market-observer/src/data_source/trading_view"
 	"market-observer/src/data_source/yahoo"
 	"market-observer/src/interfaces"
-	"market-observer/src/logger"
 	"market-observer/src/models"
 	"market-observer/src/network"
 	"market-observer/src/storage"
 )
 
-// setupDatabase initializes the database connection
-func setupDatabase(config *models.MConfig, appLogger *logger.Logger) (interfaces.IDatabase, error) {
+// -----------------------------------------------------------------------------
+
+// setupDatabase initializes the database connection based on config
+func setupDatabase(config *models.MConfig, appLogger interfaces.Logger) (interfaces.IDatabase, error) {
 	var db interfaces.IDatabase
 	var err error
 
@@ -29,70 +30,82 @@ func setupDatabase(config *models.MConfig, appLogger *logger.Logger) (interfaces
 	}
 
 	if err != nil {
-		appLogger.Critical("Failed to init db: %v", err)
+		appLogger.Critical(fmt.Sprintf("Failed to init db: %v", err))
 		return nil, err
 	}
 	if err := db.Initialize(); err != nil {
-		appLogger.Critical("Failed to migrate db: %v", err)
+		appLogger.Critical(fmt.Sprintf("Failed to migrate db: %v", err))
 		return nil, err
 	}
 	return db, nil
 }
 
+// -----------------------------------------------------------------------------
+
 // setupNetwork initializes the network manager
-func setupNetwork(config *models.MConfig, appLogger *logger.Logger) interfaces.INetworkManager {
-	return network.NewAsyncNetworkManager(config, appLogger)
+func setupNetwork(config *models.MConfig, log interfaces.Logger) interfaces.INetworkManager {
+	return network.NewAsyncNetworkManager(config, log)
 }
 
-// setupDataSources initializes the single data source requested by cmd/main
-func setupDataSources(config *models.MConfig, appLogger *logger.Logger, networkManage interfaces.INetworkManager) (interfaces.IDataSource, *datasource.MultiSourceManager, error) {
-	// Validate Enabled Sources (Strictly 1 Allowed)
-	enabledCount := 0
-	var activeSourceConfig *models.MSourceConfig
+// -----------------------------------------------------------------------------
 
-	for i := range config.DataSource.Sources {
-		if config.DataSource.Sources[i].Enabled {
-			enabledCount++
-			activeSourceConfig = &config.DataSource.Sources[i]
+// setupDataSources initializes data sources and wraps them in a manager
+func setupDataSources(config *models.MConfig, appLogger interfaces.Logger, networkManage interfaces.INetworkManager) (interfaces.IDataSource, *datasource.MultiSourceManager, error) {
+	var sources []interfaces.IDataSource
+	appLogger.Info("Initializing data sources...")
+
+	// Symbol Filtering
+	for _, srcCfg := range config.DataSource.Sources {
+		if !srcCfg.Enabled {
+			continue
+		}
+
+		var s interfaces.IDataSource
+
+		switch srcCfg.Type {
+		case "yahoo":
+			if len(srcCfg.Symbols) > 0 {
+				s = yahoo.NewYahooFinanceSource(config, srcCfg, networkManage, appLogger)
+			} else {
+				appLogger.Info(fmt.Sprintf("Source %s: No classic symbols to fetch from provider.", srcCfg.Name))
+				continue
+			}
+		case "nats":
+			s = datasource.NewNATSDataSource(config, srcCfg, appLogger)
+		case "trading_view":
+			s = trading_view.NewTradingViewSource(config, srcCfg, appLogger)
+		default:
+			appLogger.Warning(fmt.Sprintf("Unknown source type in config: %s", srcCfg.Name))
+			continue
+		}
+
+		sources = append(sources, s)
+		appLogger.Info(fmt.Sprintf("Added source: %s with %d symbols (IsRealTime: %v)", srcCfg.Name, len(srcCfg.Symbols), s.IsRealTime()))
+	}
+
+	if len(sources) == 0 {
+		appLogger.Critical("No valid data sources initialized. Exiting.")
+		return nil, nil, fmt.Errorf("no valid data sources")
+	}
+
+	// Verify all sources have compatible IsRealTime settings
+	isRealTimeRef := sources[0].IsRealTime()
+	for i, s := range sources {
+		if s.IsRealTime() != isRealTimeRef {
+			appLogger.Critical(fmt.Sprintf("Source incompatibility detected! Source %d starts with %v but ref is %v", i, s.IsRealTime(), isRealTimeRef))
+			os.Exit(1)
 		}
 	}
 
-	if enabledCount == 0 {
-		appLogger.Critical("No data sources enabled in config. Please enable exactly one.")
-		os.Exit(1)
-	}
-	if enabledCount > 1 {
-		appLogger.Critical("Multiple data sources enabled (%d). Please enable exactly one for this mode.", enabledCount)
-		os.Exit(1)
-	}
-
-	// Factory Pattern based on Type
-	var source interfaces.IDataSource
-	sourceType := strings.ToLower(activeSourceConfig.Type)
-	if sourceType == "" {
-		sourceType = "yahoo" // Default
-	}
-
-	switch sourceType {
-	case "yahoo":
-		source = yahoo.NewYahooFinanceSource(config, *activeSourceConfig, networkManage)
-	case "nats":
-		source = datasource.NewNATSDataSource(config, *activeSourceConfig, appLogger)
-	case "trading_view":
-		source = trading_view.NewTradingViewSource(config, *activeSourceConfig, appLogger)
-	default:
-		appLogger.Critical("Unknown data source type: %s for source: %s", sourceType, activeSourceConfig.Name)
-		os.Exit(1)
-	}
-
-	appLogger.Info("Initialized Data Source: %s (Type: %s)", activeSourceConfig.Name, sourceType)
-
-	// Wrap in MultiSourceManager for Control Services
-	multiSource := datasource.NewMultiSourceManager([]interfaces.IDataSource{source}, appLogger)
-	return source, multiSource, nil
+	// Always use MultiSourceManager
+	appLogger.Info(fmt.Sprintf("Initializing MultiSourceManager for %d sources.", len(sources)))
+	multiSource := datasource.NewMultiSourceManager(sources, appLogger)
+	return multiSource, multiSource, nil
 }
 
+// -----------------------------------------------------------------------------
+
 // setupAnalysis initializes the analysis facade
-func setupAnalysis(config *models.MConfig, appLogger *logger.Logger) *analysis.AnalysisFacade {
-	return analysis.NewAnalysisFacade(config, appLogger)
+func setupAnalysis(config *models.MConfig, log interfaces.Logger) *analysis.AnalysisFacade {
+	return analysis.NewAnalysisFacade(config, log)
 }

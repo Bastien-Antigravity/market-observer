@@ -6,7 +6,6 @@ import (
 	"io"
 	"market-observer/src/helpers"
 	"market-observer/src/interfaces"
-	"market-observer/src/logger"
 	"market-observer/src/models"
 	"net/http"
 	"net/url"
@@ -17,12 +16,12 @@ type AsyncNetworkManager struct {
 	Config       *models.MConfig
 	ProxyManager interfaces.IProxyManager
 	Client       *http.Client
-	Logger       *logger.Logger
+	Logger       interfaces.Logger
 }
 
 // -----------------------------------------------------------------------------
 
-func NewAsyncNetworkManager(cfg *models.MConfig, log *logger.Logger) *AsyncNetworkManager {
+func NewAsyncNetworkManager(cfg *models.MConfig, log interfaces.Logger) *AsyncNetworkManager {
 	var proxies []string
 	if cfg.Network.Enabled {
 		proxies = cfg.Network.Proxies
@@ -30,7 +29,7 @@ func NewAsyncNetworkManager(cfg *models.MConfig, log *logger.Logger) *AsyncNetwo
 
 	nm := &AsyncNetworkManager{
 		Config:       cfg,
-		ProxyManager: helpers.NewProxyManager(proxies),
+		ProxyManager: helpers.NewProxyManager(proxies, log),
 		Logger:       log,
 	}
 	nm.Client = nm.createClient()
@@ -108,24 +107,24 @@ func (nm *AsyncNetworkManager) Get(urlStr string, params map[string]string) ([]b
 		resp, err := nm.Client.Do(req)
 		if err != nil {
 			lastErr = err
-			nm.Logger.Info("Request failed (attempt %d/%d): %v", i+1, maxRetries+1, err)
+			nm.Logger.Info(fmt.Sprintf("Request failed (attempt %d/%d): %v", i+1, maxRetries+1, err))
 			continue
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode == 429 || resp.StatusCode == 403 {
 			lastErr = fmt.Errorf("blocked (status %d)", resp.StatusCode)
-			nm.Logger.Info("Request blocked (%d). Rotating proxy.", resp.StatusCode)
+			nm.Logger.Info(fmt.Sprintf("Request blocked (%d). Rotating proxy.", resp.StatusCode))
 
 			// If we are getting blocked repeatedly, try to refresh proxies
 			if i == maxRetries-1 && nm.Config.Network.Enabled {
 				nm.Logger.Warning("Repeated blocks. Attempting to scrape new proxies...")
 				count, refreshErr := nm.ProxyManager.RefreshProxies()
 				if refreshErr == nil && count > 0 {
-					nm.Logger.Info("Refreshed %d proxies. Retrying...", count)
+					nm.Logger.Info(fmt.Sprintf("Refreshed %d proxies. Retrying...", count))
 					nm.rotateProxy()
 				} else {
-					nm.Logger.Error("Failed to refresh proxies: %v", refreshErr)
+					nm.Logger.Error(fmt.Sprintf("Failed to refresh proxies: %v", refreshErr))
 				}
 			}
 			continue
@@ -133,7 +132,7 @@ func (nm *AsyncNetworkManager) Get(urlStr string, params map[string]string) ([]b
 
 		if resp.StatusCode != 200 {
 			lastErr = fmt.Errorf("bad status: %d", resp.StatusCode)
-			nm.Logger.Info("Bad status %d", resp.StatusCode)
+			nm.Logger.Info(fmt.Sprintf("Bad status %d", resp.StatusCode))
 			continue
 		}
 

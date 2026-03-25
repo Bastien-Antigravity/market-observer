@@ -6,14 +6,13 @@ import (
 	"sync"
 
 	"market-observer/src/interfaces"
-	"market-observer/src/logger"
 	"market-observer/src/models"
 )
 
 // MultiSourceManager aggregates multiple IDataSource instances type
 type MultiSourceManager struct {
 	Sources    map[string]interfaces.IDataSource
-	Logger     *logger.Logger
+	Logger     interfaces.Logger
 	mu         sync.RWMutex
 	outputChan chan<- map[string][]models.MStockPrice // Send-only, managed by parent
 	ctx        context.Context                        // Lifecycle context (derived)
@@ -23,7 +22,7 @@ type MultiSourceManager struct {
 
 // -----------------------------------------------------------------------------
 
-func NewMultiSourceManager(sources []interfaces.IDataSource, log *logger.Logger) *MultiSourceManager {
+func NewMultiSourceManager(sources []interfaces.IDataSource, log interfaces.Logger) *MultiSourceManager {
 	m := &MultiSourceManager{
 		Sources: make(map[string]interfaces.IDataSource),
 		Logger:  log,
@@ -49,7 +48,7 @@ func (m *MultiSourceManager) AddSource(source interfaces.IDataSource) error {
 	}
 
 	m.Sources[name] = source
-	m.Logger.Info("Added source: %s", name)
+	m.Logger.Info(fmt.Sprintf("Added source: %s", name))
 
 	// If Manager is already running, start the new source immediately
 	if m.outputChan != nil && m.ctx != nil {
@@ -58,7 +57,7 @@ func (m *MultiSourceManager) AddSource(source interfaces.IDataSource) error {
 			m.wg.Done()
 			return fmt.Errorf("failed to start source %s: %v", name, err)
 		}
-		m.Logger.Info("Started source: %s", name)
+		m.Logger.Info(fmt.Sprintf("Started source: %s", name))
 	}
 
 	return nil
@@ -88,11 +87,11 @@ func (m *MultiSourceManager) RemoveSource(name string) error {
 
 	// Stop the source
 	if err := source.Stop(); err != nil {
-		m.Logger.Error("Error stopping source %s: %v", name, err)
+		m.Logger.Error(fmt.Sprintf("Error stopping source %s: %v", name, err))
 	}
 
 	delete(m.Sources, name)
-	m.Logger.Info("Removed source: %s", name)
+	m.Logger.Info(fmt.Sprintf("Removed source: %s", name))
 	return nil
 }
 
@@ -148,7 +147,7 @@ func (m *MultiSourceManager) Start(parentCtx context.Context, outputChan chan<- 
 	for _, src := range m.Sources {
 		m.wg.Add(1)
 		if err := src.Start(m.ctx, m.outputChan, m.wg); err != nil {
-			m.Logger.Error("Failed to start source %s: %v", src.Name(), err)
+			m.Logger.Error(fmt.Sprintf("Failed to start source %s: %v", src.Name(), err))
 			m.wg.Done()
 			return err
 		}
@@ -237,7 +236,7 @@ func (m *MultiSourceManager) FetchInitialData() (map[string][]models.MStockPrice
 			defer wg.Done()
 			data, err := s.FetchInitialData()
 			if err != nil {
-				m.Logger.Error("One of the sources failed initial fetch: %v", err)
+				m.Logger.Error(fmt.Sprintf("One of the sources failed initial fetch: %v", err))
 				return // Continue with other sources
 			}
 			mu.Lock()
@@ -267,7 +266,7 @@ func (m *MultiSourceManager) FetchUpdateData() (map[string][]models.MStockPrice,
 			defer wg.Done()
 			data, err := s.FetchUpdateData()
 			if err != nil {
-				m.Logger.Error("One of the sources failed update fetch: %v", err)
+				m.Logger.Error(fmt.Sprintf("One of the sources failed update fetch: %v", err))
 				return
 			}
 			mu.Lock()
@@ -312,12 +311,22 @@ func (m *MultiSourceManager) IsRealTime() bool {
 
 		if isRT != firstStatus {
 			// Log critical and exit
-			m.Logger.Critical("Data Source Incompatibility Detected :\nSource '%s' has IsRealTime=%v, but source '%s' has IsRealTime=%v.\nProgram cannot continue with mixed Real-Time and Delayed sources as it causes data corruption.", firstSource, firstStatus, name, isRT)
+			m.Logger.Critical(fmt.Sprintf("Data Source Incompatibility Detected :\nSource '%s' has IsRealTime=%v, but source '%s' has IsRealTime=%v.\nProgram cannot continue with mixed Real-Time and Delayed sources as it causes data corruption.", firstSource, firstStatus, name, isRT))
 			return false // Unreachable due to os.Exit in Critical, but satisfied signature
 		}
 	}
 
 	return firstStatus
+}
+
+func (m *MultiSourceManager) Type() string {
+	return "multi"
+}
+
+func (m *MultiSourceManager) IsRunning() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.ctx != nil && m.ctx.Err() == nil
 }
 
 // -----------------------------------------------------------------------------
@@ -327,7 +336,7 @@ func (m *MultiSourceManager) UpdateSymbols(symbols []string) error {
 	defer m.mu.RUnlock()
 	for _, src := range m.Sources {
 		if err := src.UpdateSymbols(symbols); err != nil {
-			m.Logger.Error("Failed to update symbols for a source: %v", err)
+			m.Logger.Error(fmt.Sprintf("Failed to update symbols for a source: %v", err))
 			return err
 		}
 	}

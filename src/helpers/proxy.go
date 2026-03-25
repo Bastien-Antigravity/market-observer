@@ -3,7 +3,7 @@ package helpers
 import (
 	"fmt"
 	"io"
-	"market-observer/src/logger"
+	"market-observer/src/interfaces"
 	"math/rand"
 	"net/http"
 	"net/url"
@@ -20,13 +20,13 @@ type ProxyManager struct {
 	userAgents []string
 	index      int
 	mu         sync.Mutex
-	logger     *logger.Logger
+	logger     interfaces.Logger
 	httpClient *http.Client
 }
 
 // -----------------------------------------------------------------------------
 
-func NewProxyManager(proxies []string) *ProxyManager {
+func NewProxyManager(proxies []string, l interfaces.Logger) *ProxyManager {
 	// Validate and format proxies on init
 	var validProxies []string
 	for _, p := range proxies {
@@ -37,7 +37,7 @@ func NewProxyManager(proxies []string) *ProxyManager {
 
 	pm := &ProxyManager{
 		proxies: validProxies,
-		logger:  logger.NewLogger(nil, "ProxyManager"),
+		logger:  l,
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
@@ -81,7 +81,7 @@ func (pm *ProxyManager) RotateProxy() {
 	}
 
 	pm.index = (pm.index + 1) % len(pm.proxies)
-	pm.logger.Info("Rotating proxy to: %s", pm.proxies[pm.index])
+	pm.logger.Info(fmt.Sprintf("Rotating proxy to: %s", pm.proxies[pm.index]))
 }
 
 // -----------------------------------------------------------------------------
@@ -152,7 +152,7 @@ func (pm *ProxyManager) RefreshProxies() (int, error) {
 	pm.index = 0
 	pm.mu.Unlock()
 
-	pm.logger.Info("Found and updated %d proxies", len(newProxies))
+	pm.logger.Info(fmt.Sprintf("Found and updated %d proxies", len(newProxies)))
 	return len(newProxies), nil
 }
 

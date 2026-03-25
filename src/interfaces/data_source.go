@@ -15,6 +15,12 @@ type IDataSource interface {
 	// Name returns the unique identifier of the source
 	Name() string
 
+	// Type returns the type of the source (e.g. "yahoo", "nats")
+	Type() string
+
+	// IsRunning returns true if the source is currently active
+	IsRunning() bool
+
 	// -----------------------------------------------------------------------------
 
 	// FetchInitialData retrieves historical data (e.g. 7 days) for all validation symbols.

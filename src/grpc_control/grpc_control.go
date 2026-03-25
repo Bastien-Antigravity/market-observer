@@ -18,13 +18,10 @@ func (s *ControlService) ListSources(ctx context.Context, req *Empty) (*ListSour
 	for _, src := range sourcesInfo {
 		info := &SourceStatus{
 			Name:        src.Name(),
-			IsRunning:   true,
+			IsRunning:   src.IsRunning(),
 			SymbolCount: 0,
 			IsRealTime:  src.IsRealTime(),
-			Type:        "unknown",
-		}
-		if _, ok := src.(*yahoo.YahooFinanceSource); ok {
-			info.Type = "yahoo"
+			Type:        src.Type(),
 		}
 		response = append(response, info)
 	}
@@ -53,13 +50,13 @@ func (s *ControlService) AddSource(ctx context.Context, req *AddSourceRequest) (
 
 	switch req.Type {
 	case "yahoo":
-		newSource = yahoo.NewYahooFinanceSource(s.Config.MConfig, sourceCfg, s.NetworkManager)
+		newSource = yahoo.NewYahooFinanceSource(s.Config.MConfig, sourceCfg, s.NetworkManager, s.Logger)
 	default:
 		return &SourceControlResponse{Success: false, Message: fmt.Sprintf("unsupported source type: %s", req.Type), CurrentState: "stopped"}, nil
 	}
 
 	if err := s.DataSource.AddSource(newSource); err != nil {
-		s.Logger.Error("gRPC AddSource failed: %v", err)
+		s.Logger.Error(fmt.Sprintf("gRPC AddSource failed: %v", err))
 		return &SourceControlResponse{Success: false, Message: err.Error(), CurrentState: "stopped"}, nil
 	}
 
@@ -122,7 +119,7 @@ func (s *ControlService) UpdateSymbols(ctx context.Context, req *UpdateSymbolsRe
 	}
 
 	if err := source.UpdateSymbols(req.Symbols); err != nil {
-		s.Logger.Error("Failed to update running source: %v", err)
+		s.Logger.Error(fmt.Sprintf("Failed to update running source: %v", err))
 		return &UpdateSymbolsResponse{Success: false, Message: err.Error(), SymbolCount: 0}, nil
 	}
 
@@ -139,7 +136,7 @@ func (s *ControlService) UpdateSymbols(ctx context.Context, req *UpdateSymbolsRe
 		s.Config.Save(s.ConfigPath)
 	}
 
-	s.Logger.Info("UpdateSymbols success for %s. Count: %d", req.SourceName, len(req.Symbols))
+	s.Logger.Info(fmt.Sprintf("UpdateSymbols success for %s. Count: %d", req.SourceName, len(req.Symbols)))
 
 	return &UpdateSymbolsResponse{
 		Success:     true,
@@ -184,13 +181,10 @@ func (s *ControlService) GetStatus(ctx context.Context, req *Empty) (*StatusResp
 	for _, src := range sourcesInfo {
 		info := &SourceStatus{
 			Name:        src.Name(),
-			IsRunning:   true,
+			IsRunning:   src.IsRunning(),
 			SymbolCount: 0,
 			IsRealTime:  src.IsRealTime(),
-			Type:        "unknown",
-		}
-		if _, ok := src.(*yahoo.YahooFinanceSource); ok {
-			info.Type = "yahoo"
+			Type:        src.Type(),
 		}
 		response = append(response, info)
 	}

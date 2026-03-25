@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"market-observer/src/interfaces"
-	"market-observer/src/logger"
 	"market-observer/src/models"
 	"market-observer/src/utils"
 )
@@ -25,7 +24,7 @@ type YahooFinanceSource struct {
 	SourceConfig     models.MSourceConfig // Store specific source config (Generic settings)
 	symbols          atomic.Value         // Stores []string safely
 	Network          interfaces.INetworkManager
-	Logger           *logger.Logger
+	Logger           interfaces.Logger
 	HttpClient       *http.Client
 	MarketScheduler  *utils.MarketScheduler
 	LastTimestamps   map[string]int64
@@ -50,19 +49,27 @@ func (s *YahooFinanceSource) IsRealTime() bool {
 	return false
 }
 
+func (s *YahooFinanceSource) Type() string {
+	return "yahoo"
+}
+
+func (s *YahooFinanceSource) IsRunning() bool {
+	return s.isRunning.Load()
+}
+
 // -----------------------------------------------------------------------------
 
-func NewYahooFinanceSource(cfg *models.MConfig, sourceCfg models.MSourceConfig, netMgr interfaces.INetworkManager) *YahooFinanceSource {
+func NewYahooFinanceSource(cfg *models.MConfig, sourceCfg models.MSourceConfig, netMgr interfaces.INetworkManager, log interfaces.Logger) *YahooFinanceSource {
 	s := &YahooFinanceSource{
-		Config:         cfg,
-		SourceConfig:   sourceCfg,
-		Network:        netMgr,
-		Logger:         logger.NewLogger(nil, "YahooFinanceSource-"+sourceCfg.Name), // Unique Logger Name
+		Config:       cfg,
+		SourceConfig: sourceCfg,
+		Network:      netMgr,
+		Logger:       log,
 		LastTimestamps: make(map[string]int64),
 		HttpClient: &http.Client{
 			Timeout: time.Duration(cfg.Network.RequestTimeout) * time.Second,
 		},
-		MarketScheduler: utils.NewMarketScheduler(sourceCfg.Symbols, logger.NewLogger(nil, "MarketScheduler-"+sourceCfg.Name)),
+		MarketScheduler: utils.NewMarketScheduler(sourceCfg.Symbols, log),
 	}
 	s.symbols.Store(sourceCfg.Symbols)
 	return s
@@ -169,7 +176,7 @@ func (s *YahooFinanceSource) fetchBatch(
 			if err != nil {
 				// Don't log if cancelled
 				if ctx.Err() == nil {
-					s.Logger.Info("Error fetching symbol %s: %v", sym, err)
+					s.Logger.Info(fmt.Sprintf("Error fetching symbol %s: %v", sym, err))
 					errorsMu.Lock()
 					errors = append(errors, err)
 					errorsMu.Unlock()
@@ -195,7 +202,7 @@ func (s *YahooFinanceSource) fetchBatch(
 	select {
 	case <-done:
 		// Completed normally
-		s.Logger.Info("YahooFinance: Fetched %d/%d symbols successfully", len(results), len(symbols))
+		s.Logger.Info(fmt.Sprintf("YahooFinance: Fetched %d/%d symbols successfully", len(results), len(symbols)))
 
 		if len(results) == 0 && len(errors) > 0 {
 			return nil, fmt.Errorf("all fetches failed: %v", errors[0])
@@ -324,7 +331,7 @@ func (s *YahooFinanceSource) parseChartResponse(symbol string, data []byte) ([]m
 		len(result.Timestamp) != len(quote.High) ||
 		len(result.Timestamp) != len(quote.Low) ||
 		len(result.Timestamp) != len(quote.Volume) {
-		s.Logger.Info("Data alignment error for %s: Mismatched array lengths", symbol)
+		s.Logger.Info(fmt.Sprintf("Data alignment error for %s: Mismatched array lengths", symbol))
 		return nil, fmt.Errorf("data alignment error for %s", symbol)
 	}
 
@@ -377,12 +384,12 @@ func (s *YahooFinanceSource) parseChartResponse(symbol string, data []byte) ([]m
 
 		// 3. Data Cleaning (matches Python)
 		if !isValid {
-			s.Logger.Info("Invalid OHLCV data received for %s at index %d", symbol, i)
+			s.Logger.Info(fmt.Sprintf("Invalid OHLCV data received for %s at index %d", symbol, i))
 			continue
 		}
 
 		if closeVal <= 0 || volume < 0 {
-			s.Logger.Info("Skipping invalid point for %s: close=%f, volume=%f", symbol, closeVal, volume)
+			s.Logger.Info(fmt.Sprintf("Skipping invalid point for %s: close=%f, volume=%f", symbol, closeVal, volume))
 			continue
 		}
 
@@ -451,7 +458,7 @@ func (s *YahooFinanceSource) parseChartResponse(symbol string, data []byte) ([]m
 	// Logging (matches Python's debug log)
 	startTs := timeSeries[0].Timestamp
 	endTs := timeSeries[len(timeSeries)-1].Timestamp
-	s.Logger.Info("Fetched %s: %d valid points [%d -> %d]", symbol, validPoints, startTs, endTs)
+	s.Logger.Info(fmt.Sprintf("Fetched %s: %d valid points [%d -> %d]", symbol, validPoints, startTs, endTs))
 
 	return timeSeries, nil
 }
@@ -474,9 +481,9 @@ func (s *YahooFinanceSource) Start(parentCtx context.Context, outputChan chan<- 
 	s.outputChan = outputChan
 	s.isRunning.Store(true)
 
-	wg.Add(1)
+	// Don't call wg.Add(1) here; the caller (MultiSourceManager) already does it for the primary loop
 	go s.runLoop(ctx, outputChan, wg)
-	s.Logger.Info("Started YahooFinanceSource: %s", s.Name())
+	s.Logger.Info(fmt.Sprintf("Started YahooFinanceSource: %s", s.Name()))
 	return nil
 }
 
@@ -495,7 +502,7 @@ func (s *YahooFinanceSource) Stop() error {
 		s.cancelFunc()
 	}
 	s.isRunning.Store(false)
-	s.Logger.Info("Stopped YahooFinanceSource: %s", s.Name())
+	s.Logger.Info(fmt.Sprintf("Stopped YahooFinanceSource: %s", s.Name()))
 	return nil
 }
 
@@ -561,12 +568,12 @@ func (s *YahooFinanceSource) runLoop(ctx context.Context, outputChan chan<- map[
 				// Fetch ALL symbols
 				symbolsToFetch = s.getSymbols()
 				isFullUpdate = true
-				s.Logger.Info("Hourly Catch-up: Fetching ALL %d symbols.", len(symbolsToFetch))
+				s.Logger.Info(fmt.Sprintf("Hourly Catch-up: Fetching ALL %d symbols.", len(symbolsToFetch)))
 			} else {
 				// B. Fetch only OPEN markets
 				symbolsToFetch = s.MarketScheduler.GetOpenSymbols()
 				if len(symbolsToFetch) > 0 {
-					s.Logger.Info("Market Open: Fetching %d active symbols.", len(symbolsToFetch))
+					s.Logger.Info(fmt.Sprintf("Market Open: Fetching %d active symbols.", len(symbolsToFetch)))
 				}
 			}
 
@@ -576,7 +583,7 @@ func (s *YahooFinanceSource) runLoop(ctx context.Context, outputChan chan<- map[
 				if err != nil {
 					// Only log real errors
 					if ctx.Err() == nil {
-						s.Logger.Info("Error fetching updates: %v", err)
+						s.Logger.Info(fmt.Sprintf("Error fetching updates: %v", err))
 					}
 					continue
 				} else {
@@ -610,7 +617,7 @@ func (s *YahooFinanceSource) runLoop(ctx context.Context, outputChan chan<- map[
 						if err := s.PushToDataSourceManager(validData); err != nil {
 							// Only log real errors, not shutdown signals
 							if ctx.Err() == nil {
-								s.Logger.Error("YahooSource runLoop exiting due to Push error: %v", err)
+								s.Logger.Error(fmt.Sprintf("YahooSource runLoop exiting due to Push error: %v", err))
 							}
 							return
 						}
@@ -641,9 +648,9 @@ func (s *YahooFinanceSource) runLoop(ctx context.Context, outputChan chan<- map[
 				waitTime := timeToHourly
 				if timeToOpen < waitTime {
 					waitTime = timeToOpen
-					s.Logger.Info("Market opening soon! Sleeping for %v.", waitTime)
+					s.Logger.Info(fmt.Sprintf("Market opening soon! Sleeping for %v.", waitTime))
 				} else {
-					s.Logger.Info("Markets closed. Sleep %v until next hourly update.", waitTime)
+					s.Logger.Info(fmt.Sprintf("Markets closed. Sleep %v until next hourly update.", waitTime))
 				}
 
 				// Enforce minimum sleep to avoid spin if calculation returns 0
@@ -666,7 +673,7 @@ func (s *YahooFinanceSource) runLoop(ctx context.Context, outputChan chan<- map[
 func (s *YahooFinanceSource) UpdateSymbols(symbols []string) error {
 	// Atomic swap
 	s.symbols.Store(symbols)
-	s.Logger.Info("Updated symbol list. New count: %d", len(symbols))
+	s.Logger.Info(fmt.Sprintf("Updated symbol list. New count: %d", len(symbols)))
 
 	// Also update MarketScheduler
 	s.MarketScheduler.UpdateSymbols(symbols)

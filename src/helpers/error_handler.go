@@ -2,9 +2,10 @@ package helpers
 
 import (
 	"fmt"
-	"market-observer/src/logger"
 	"strings"
 	"time"
+
+	"market-observer/src/interfaces"
 )
 
 // -----------------------------------------------------------------------------
@@ -28,11 +29,13 @@ func (e *MarketObserverError) Unwrap() error {
 }
 
 // Helper to define distinct error types for type assertions if needed
-type ConfigurationError struct{ MarketObserverError }
-type NetworkError struct{ MarketObserverError }
-type DataSourceError struct{ MarketObserverError }
-type DatabaseError struct{ MarketObserverError }
-type ValidationError struct{ MarketObserverError }
+type (
+	ConfigurationError struct{ MarketObserverError }
+	NetworkError       struct{ MarketObserverError }
+	DataSourceError    struct{ MarketObserverError }
+	DatabaseError      struct{ MarketObserverError }
+	ValidationError    struct{ MarketObserverError }
+)
 
 // -----------------------------------------------------------------------------
 // Retry Logic
@@ -66,14 +69,14 @@ func RetryWithBackoff(operation string, maxRetries int, baseDelay time.Duration,
 // -----------------------------------------------------------------------------
 
 type ErrorHandler struct {
-	Logger                 *logger.Logger
+	Logger                 interfaces.Logger
 	ErrorCount             int
 	MaxErrorsBeforeRestart int
 }
 
-func NewErrorHandler() *ErrorHandler {
+func NewErrorHandler(l interfaces.Logger) *ErrorHandler {
 	return &ErrorHandler{
-		Logger:                 logger.NewLogger(nil, "ErrorHandler"),
+		Logger:                 l,
 		ErrorCount:             0,
 		MaxErrorsBeforeRestart: 10,
 	}
@@ -102,7 +105,7 @@ func (e *ErrorHandler) ExecuteWithRetry(operation string, fn func() (interface{}
 		// Handle Error
 		if attempt == maxRetries-1 {
 			e.ErrorCount++
-			e.Logger.Error("%s failed (attempt %d/%d): %v", operation, attempt+1, maxRetries, err)
+			e.Logger.Error(fmt.Sprintf("%s failed (attempt %d/%d): %v", operation, attempt+1, maxRetries, err))
 
 			// Wrap into specific error types based on context if simpler heuristics apply
 			lowerOp := strings.ToLower(operation)
@@ -116,7 +119,7 @@ func (e *ErrorHandler) ExecuteWithRetry(operation string, fn func() (interface{}
 		}
 
 		// Log warning and wait
-		e.Logger.Warning("%s failed (attempt %d/%d): %v", operation, attempt+1, maxRetries, err)
+		e.Logger.Warning(fmt.Sprintf("%s failed (attempt %d/%d): %v", operation, attempt+1, maxRetries, err))
 		delay := time.Duration(1<<attempt) * time.Second
 		time.Sleep(delay)
 	}
@@ -128,6 +131,13 @@ func (e *ErrorHandler) ExecuteWithRetry(operation string, fn func() (interface{}
 
 func (e *ErrorHandler) Handle(err error, context string) {
 	if err != nil {
-		e.Logger.Error("Error in %s: %v", context, err)
+		e.Logger.Error(fmt.Sprintf("Error in %s: %v", context, err))
+	}
+}
+
+func (e *ErrorHandler) HandleFatal(err error, context string) {
+	if err != nil {
+		e.Logger.Critical(fmt.Sprintf("FATAL in %s: %v", context, err))
+		// Note: The library's Critical might not call os.Exit, but the intention is fatal.
 	}
 }

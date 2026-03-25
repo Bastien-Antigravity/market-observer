@@ -1,15 +1,16 @@
 package main
 
 import (
-	"market-observer/src/analysis"
-	"market-observer/src/interfaces"
-	"market-observer/src/logger"
-	"market-observer/src/models"
-	"market-observer/src/utils"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
+
+	"market-observer/src/analysis"
+	"market-observer/src/interfaces"
+	"market-observer/src/models"
+	"market-observer/src/utils"
 )
 
 // -----------------------------------------------------------------------------
@@ -22,10 +23,9 @@ func runDataLoop(
 	memManager *utils.MemoryManager,
 	srv interfaces.IDataExchanger,
 	config *models.MConfig,
-	appLogger *logger.Logger,
+	appLogger interfaces.Logger,
 	intermediateStats map[string]map[string]models.MIntermediateStats, // State carried over
 ) {
-
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 
@@ -40,7 +40,7 @@ func runDataLoop(
 			}
 
 			startProcess := time.Now().UTC()
-			appLogger.Info("Received update for %d symbols", len(updates))
+			appLogger.Info(fmt.Sprintf("Received update for %d symbols", len(updates)))
 
 			// Process Updates
 			var newRaw []models.MStockPrice
@@ -127,7 +127,9 @@ func runDataLoop(
 			srv.Broadcast(payload)
 
 			// Cleanup
-			db.CleanupOldData()
+			if err := db.CleanupOldData(); err != nil {
+				appLogger.Error(fmt.Sprintf("Failed to cleanup old data: %v", err))
+			}
 
 		case <-quit:
 			appLogger.Info("Shutting down...")

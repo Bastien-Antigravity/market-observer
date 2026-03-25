@@ -4,7 +4,6 @@ import (
 	"market-observer/src/config"
 	datasource "market-observer/src/data_source"
 	"market-observer/src/interfaces"
-	"market-observer/src/logger"
 )
 
 // ControlService implements the MarketObserverControlServer interface
@@ -13,7 +12,7 @@ type ControlService struct {
 	Config         *config.Config
 	DataSource     *datasource.MultiSourceManager
 	ConfigPath     string
-	Logger         *logger.Logger
+	Logger         interfaces.Logger
 	NetworkManager interfaces.INetworkManager
 }
 
@@ -24,7 +23,7 @@ func NewControlService(
 	cfg *config.Config,
 	ds *datasource.MultiSourceManager,
 	cfgPath string,
-	log *logger.Logger,
+	log interfaces.Logger,
 	netMgr interfaces.INetworkManager,
 ) *ControlService {
 	return &ControlService{

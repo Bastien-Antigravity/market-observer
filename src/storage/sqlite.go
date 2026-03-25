@@ -3,10 +3,11 @@ package storage
 import (
 	"database/sql"
 	"fmt"
-	"log"
-	"market-observer/src/logger"
-	"market-observer/src/models"
+	"os"
 	"time"
+
+	"market-observer/src/interfaces"
+	"market-observer/src/models"
 
 	_ "modernc.org/sqlite"
 )
@@ -23,12 +24,12 @@ const (
 type AsyncSQLiteDB struct {
 	Config *models.MConfig
 	DB     *sql.DB
-	Logger *logger.Logger
+	Logger interfaces.Logger
 }
 
 // -----------------------------------------------------------------------------
 
-func NewAsyncSQLiteDB(cfg *models.MConfig, log *logger.Logger) (*AsyncSQLiteDB, error) {
+func NewAsyncSQLiteDB(cfg *models.MConfig, log interfaces.Logger) (*AsyncSQLiteDB, error) {
 	return &AsyncSQLiteDB{
 		Config: cfg,
 		Logger: log,
@@ -39,6 +40,14 @@ func NewAsyncSQLiteDB(cfg *models.MConfig, log *logger.Logger) (*AsyncSQLiteDB, 
 
 func (d *AsyncSQLiteDB) Initialize() error {
 	dsn := d.Config.Storage.DBPath
+
+	// Check Reset flag
+	if d.Config.Storage.Reset {
+		d.Logger.Warning(fmt.Sprintf("Reset flag is true: Deleting SQLite database file %s", dsn))
+		if err := os.Remove(dsn); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to delete database file %s: %w", dsn, err)
+		}
+	}
 
 	// Open DB
 	db, err := sql.Open("sqlite", dsn)
@@ -54,10 +63,10 @@ func (d *AsyncSQLiteDB) Initialize() error {
 
 	// PRAGMA optimizations
 	if _, err := db.Exec("PRAGMA journal_mode = WAL;"); err != nil {
-		d.Logger.Warning("Failed to set WAL mode: %v", err)
+		d.Logger.Warning(fmt.Sprintf("Failed to set WAL mode: %v", err))
 	}
 	if _, err := db.Exec("PRAGMA synchronous = NORMAL;"); err != nil {
-		d.Logger.Warning("Failed to set synchronous mode: %v", err)
+		d.Logger.Warning(fmt.Sprintf("Failed to set synchronous mode: %v", err))
 	}
 
 	// Recreate Tables
@@ -198,14 +207,15 @@ func (d *AsyncSQLiteDB) SaveAggregations(aggs map[string]map[string][]models.MAg
 			if err != nil {
 				return err
 			}
-			defer stmt.Close()
 
 			for _, agg := range items {
 				_, err = stmt.Exec(agg.Symbol, agg.StartTime, agg.EndTime, agg.Open, agg.High, agg.Low, agg.Close, agg.Volume, agg.PricePercentChange, agg.VolumePercentChange)
 				if err != nil {
+					stmt.Close()
 					return err
 				}
 			}
+			stmt.Close() // close immediately after use, not deferred
 		}
 	}
 
@@ -249,14 +259,15 @@ func (d *AsyncSQLiteDB) SaveIntermediateStats(stats []models.MIntermediateStats)
 		if err != nil {
 			return err
 		}
-		defer stmt.Close()
 
 		for _, s := range list {
 			_, err = stmt.Exec(s.Symbol, s.WindowName, s.AvgVolumeHistory, s.StdVolumeHistory, s.DataPointsHistory, s.LastHistoryTimestamp, time.Now().UTC())
 			if err != nil {
+				stmt.Close()
 				return err
 			}
 		}
+		stmt.Close() // close immediately after use, not deferred
 	}
 
 	return tx.Commit()
@@ -268,18 +279,18 @@ func (d *AsyncSQLiteDB) CleanupOldData() error {
 	retentionDays := d.Config.DataSource.DataRetentionDays
 	cutoff := time.Now().UTC().AddDate(0, 0, -retentionDays).Unix()
 
-	log.Printf("Cleaning up data older than %d days (timestamp < %d)...", retentionDays, cutoff)
+	d.Logger.Info(fmt.Sprintf("Cleaning up data older than %d days (timestamp < %d)...", retentionDays, cutoff))
 
 	// Clean stock_prices
 	if _, err := d.DB.Exec("DELETE FROM stock_prices WHERE timestamp < ?", cutoff); err != nil {
-		d.Logger.Error("Cleanup stock_prices error: %v", err)
+		d.Logger.Error(fmt.Sprintf("Cleanup stock_prices error: %v", err))
 	}
 
 	// Clean aggregation tables
 	for _, w := range d.Config.WindowsAgg {
 		tableName := fmt.Sprintf("aggregations_%s", w)
 		if _, err := d.DB.Exec(fmt.Sprintf("DELETE FROM %s WHERE end_time < ?", tableName), cutoff); err != nil {
-			d.Logger.Error("Cleanup %s error: %v", tableName, err)
+			d.Logger.Error(fmt.Sprintf("Cleanup %s error: %v", tableName, err))
 		}
 	}
 

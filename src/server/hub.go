@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"market-observer/src/models"
@@ -65,7 +66,7 @@ func (s *FastAPIServer) UpdateAllDatas(data interface{}) {
 	// Parse input
 	dataMap, ok := data.(map[string]interface{})
 	if !ok {
-		s.Logger.Info("AllDatas expected map[string]interface{}, got %T", data)
+		s.Logger.Info(fmt.Sprintf("AllDatas expected map[string]interface{}, got %T", data))
 		return
 	}
 
@@ -114,7 +115,7 @@ func (s *FastAPIServer) Broadcast(message interface{}) {
 	dataMap, ok := message.(map[string]interface{})
 	if !ok {
 		// Log error but don't crash
-		s.Logger.Info("Broadcast expected map[string]interface{}, got %T", message)
+		s.Logger.Info(fmt.Sprintf("Broadcast expected map[string]interface{}, got %T", message))
 		return
 	}
 
@@ -154,7 +155,11 @@ func (s *FastAPIServer) SetLatestState(state *models.MLatestData) {
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
-	CheckOrigin:     func(r *http.Request) bool { return true },
+	CheckOrigin: func(r *http.Request) bool {
+		// Only allow localhost/127.0.0.1 origins
+		origin := r.Header.Get("Origin")
+		return origin == "http://127.0.0.1:8080"
+	},
 }
 
 // -----------------------------------------------------------------------------
@@ -164,7 +169,7 @@ func (s *FastAPIServer) handleWebSocket(c *gin.Context) {
 
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
-		s.Logger.Info("Failed to upgrade websocket: %v", err)
+		s.Logger.Info(fmt.Sprintf("Failed to upgrade websocket: %v", err))
 		return
 	}
 
@@ -189,7 +194,7 @@ func (s *FastAPIServer) handleWebSocket(c *gin.Context) {
 func (s *FastAPIServer) HandleClientMessage(client *Client, message []byte) {
 	var cmd models.MSubscribeCommand
 	if err := json.Unmarshal(message, &cmd); err != nil {
-		s.Logger.Info("Failed to parse client command: %v, disconnecting client", err)
+		s.Logger.Info(fmt.Sprintf("Failed to parse client command: %v, disconnecting client", err))
 		client.conn.Close()
 		return
 	}

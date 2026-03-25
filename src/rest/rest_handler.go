@@ -6,17 +6,17 @@ import (
 	"net/http"
 
 	pb "market-observer/src/grpc_control"
-	"market-observer/src/logger"
+	"market-observer/src/interfaces"
 )
 
 type RestHandler struct {
 	Client pb.MarketObserverControlClient
-	Logger *logger.Logger
+	Logger interfaces.Logger
 }
 
 // -----------------------------------------------------------------------------
 
-func NewRestHandler(client pb.MarketObserverControlClient, logger *logger.Logger) *RestHandler {
+func NewRestHandler(client pb.MarketObserverControlClient, logger interfaces.Logger) *RestHandler {
 	return &RestHandler{
 		Client: client,
 		Logger: logger,

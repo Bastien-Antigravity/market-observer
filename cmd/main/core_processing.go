@@ -1,42 +1,31 @@
 package main
 
 import (
-	"context"
+	"fmt" // Added fmt import
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
 	"time"
 
 	"market-observer/src/analysis"
 	"market-observer/src/interfaces"
-	"market-observer/src/logger"
 	"market-observer/src/models"
 	"market-observer/src/utils"
 )
 
-// runDataLoop runs the data ingestion bounds
+// -----------------------------------------------------------------------------
+
+// runDataLoop handles the main data processing loop (direct push model)
 func runDataLoop(
-	source interfaces.IDataSource,
+	updatesChan <-chan map[string][]models.MStockPrice,
 	db interfaces.IDatabase,
 	analyzer *analysis.AnalysisFacade,
 	memManager *utils.MemoryManager,
-	config *models.MConfig,
-	appLogger *logger.Logger,
 	srv interfaces.IDataExchanger,
-	intermediateStats map[string]map[string]models.MIntermediateStats,
+	config *models.MConfig,
+	appLogger interfaces.Logger, // Changed to interfaces.Logger
+	intermediateStats map[string]map[string]models.MIntermediateStats, // State carried over
 ) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	wrapWg := &sync.WaitGroup{}
-	updatesChan := make(chan map[string][]models.MStockPrice, 100)
-
-	if err := source.Start(ctx, updatesChan, wrapWg); err != nil {
-		appLogger.Critical("Failed to start source: %v", err)
-		return
-	}
-
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 
@@ -50,21 +39,34 @@ func runDataLoop(
 				return
 			}
 
-			startProcess := time.Now()
-			appLogger.Info("Received update for %d symbols", len(updates))
+			startProcess := time.Now().UTC()
+			appLogger.Info(fmt.Sprintf("Received update for %d symbols", len(updates))) // Converted to fmt.Sprintf
 
+			// Process Updates
 			var newRaw []models.MStockPrice
 
 			for sym, data := range updates {
 				newRaw = append(newRaw, data...)
+				// Update Memory Manager
 				for _, p := range data {
 					memManager.AddDataPoint(sym, p)
 				}
 			}
 			db.SaveStockPricesBulk(newRaw)
 
+			// Construct map with FULL history for Updated Symbols
+			// This ensures AggregateRealTime has enough data points to calculate Correlation/Anomaly
+			fullHistoryMap := make(map[string][]models.MStockPrice)
+			for sym := range updates {
+				// Get full history from RingBuffer
+				if buffer := memManager.GetBuffer(sym); buffer != nil {
+					fullHistoryMap[sym] = buffer.GetAll()
+				}
+			}
+
+			// Aggregate Realtime using FULL history
+
 			accumulatedAggs := make(map[string]map[string][]models.MAggregation)
-			totalWindows := 0
 
 			for _, w := range config.WindowsAgg {
 				currentWindowStats := make(map[string]models.MIntermediateStats)
@@ -74,9 +76,10 @@ func runDataLoop(
 					}
 				}
 
-				wAggs := analyzer.AggregateRealTime(updates, w, currentWindowStats)
-				totalWindows += len(wAggs)
+				// Pass fullHistoryMap instead of updates
+				wAggs := analyzer.AggregateRealTime(fullHistoryMap, w, currentWindowStats)
 
+				// Save
 				aggMap := make(map[string]map[string][]models.MAggregation)
 				for sym, innerMap := range wAggs {
 					if aggMap[sym] == nil {
@@ -88,10 +91,12 @@ func runDataLoop(
 				}
 				db.SaveAggregations(aggMap)
 
+				// Accumulate for Broadcast
 				for sym, innerMap := range wAggs {
 					if _, ok := accumulatedAggs[sym]; !ok {
 						accumulatedAggs[sym] = make(map[string][]models.MAggregation)
 					}
+
 					if candle, ok := innerMap[w]; ok {
 						accumulatedAggs[sym][w] = []models.MAggregation{candle}
 					}
@@ -100,6 +105,7 @@ func runDataLoop(
 
 			elapsed := time.Since(startProcess).Seconds()
 
+			// Broadcast
 			rawInterfaceMap := make(map[string]interface{})
 			for k, v := range updates {
 				rawInterfaceMap[k] = v
@@ -108,24 +114,25 @@ func runDataLoop(
 			payload := map[string]interface{}{
 				"type":         "UPDATE",
 				"raw_data":     rawInterfaceMap,
-				"aggregations": accumulatedAggs,
-				"timestamp":    time.Now().Unix(),
+				"aggregations": accumulatedAggs, // Only new candles
+				"timestamp":    time.Now().UTC().Unix(),
 				"processing_metrics": models.MProcessingMetrics{
 					AggregationTimeSeconds: elapsed,
 					ValidSymbols:           len(updates),
-					WindowsProcessed:       totalWindows,
+					WindowsProcessed:       len(config.WindowsAgg),
 				},
 			}
 
 			srv.UpdateAllDatas(payload)
 			srv.Broadcast(payload)
 
-			db.CleanupOldData()
+			// Cleanup
+			if err := db.CleanupOldData(); err != nil {
+				appLogger.Error(fmt.Sprintf("Failed to cleanup old data: %v", err))
+			}
 
 		case <-quit:
 			appLogger.Info("Shutting down...")
-			cancel()
-			wrapWg.Wait()
 			return
 		}
 	}

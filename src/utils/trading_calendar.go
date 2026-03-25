@@ -1,9 +1,11 @@
 package utils
 
 import (
-	"log"
+	"fmt"
 	"strings"
 	"time"
+
+	"market-observer/src/interfaces"
 
 	"github.com/scmhub/calendar"
 )
@@ -13,6 +15,7 @@ type TradingCalendar struct {
 	Calendar *calendar.Calendar
 	Fallback bool
 	Timezone *time.Location
+	Logger   interfaces.Logger
 }
 
 // -----------------------------------------------------------------------------
@@ -69,7 +72,7 @@ func GetMicForSymbol(symbol string) string {
 
 // -----------------------------------------------------------------------------
 
-func GetCalendarByMic(mic string) *TradingCalendar {
+func GetCalendarByMic(mic string, logger interfaces.Logger) *TradingCalendar {
 	// scmhub/calendar.GetCalendar returns a calendar by MIC
 	cal := calendar.GetCalendar(mic)
 	if cal == nil {
@@ -78,23 +81,25 @@ func GetCalendarByMic(mic string) *TradingCalendar {
 	}
 
 	if cal == nil {
-		log.Printf("WARNING: Failed to load calendar for MIC '%s' and fallback 'xnys'. Using simple fallback (Mon-Fri 09:30-16:00 UTC).", mic)
+		if logger != nil {
+			logger.Warning(fmt.Sprintf("Failed to load calendar for MIC '%s' and fallback 'xnys'. Using simple fallback (Mon-Fri 09:30-16:00 UTC).", mic))
+		}
 		// Try load NY location for fallback
 		nyLoc, _ := time.LoadLocation("America/New_York")
 		if nyLoc == nil {
 			nyLoc = time.UTC // Worst case
 		}
-		return &TradingCalendar{Fallback: true, Timezone: nyLoc}
+		return &TradingCalendar{Fallback: true, Timezone: nyLoc, Logger: logger}
 	}
 
-	return &TradingCalendar{Calendar: cal, Fallback: false, Timezone: cal.Loc}
+	return &TradingCalendar{Calendar: cal, Fallback: false, Timezone: cal.Loc, Logger: logger}
 }
 
 // -----------------------------------------------------------------------------
 
-func GetCalendar(symbol string) *TradingCalendar {
+func GetCalendar(symbol string, logger interfaces.Logger) *TradingCalendar {
 	mic := GetMicForSymbol(symbol)
-	return GetCalendarByMic(mic)
+	return GetCalendarByMic(mic, logger)
 }
 
 // -----------------------------------------------------------------------------

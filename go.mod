@@ -3,6 +3,8 @@ module market-observer
 go 1.25.3
 
 require (
+	github.com/Bastien-Antigravity/distributed-config v1.4.0
+	github.com/Bastien-Antigravity/flexible-logger v0.0.0-20260101164007-2690fa29862b
 	github.com/VictorVictini/tradingview-lib v0.0.0-20240919160801-440b9f3f562d
 	github.com/gin-gonic/gin v1.11.0
 	github.com/gorilla/websocket v1.5.3
@@ -16,10 +18,14 @@ require (
 )
 
 require (
+	capnproto.org/go/capnp/v3 v3.1.0-alpha.2 // indirect
+	github.com/Bastien-Antigravity/safe-socket v1.4.0 // indirect
 	github.com/bytedance/sonic v1.14.0 // indirect
 	github.com/bytedance/sonic/loader v0.3.0 // indirect
 	github.com/cloudwego/base64x v0.1.6 // indirect
+	github.com/colega/zeropool v0.0.0-20230505084239-6fb4a4f75381 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/edsrzf/mmap-go v1.2.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.8 // indirect
 	github.com/gin-contrib/sse v1.1.0 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect

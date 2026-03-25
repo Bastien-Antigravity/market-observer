@@ -1,12 +1,13 @@
 package main
 
 import (
+	"fmt"
+	"time"
+
 	"market-observer/src/analysis"
 	"market-observer/src/interfaces"
-	"market-observer/src/logger"
 	"market-observer/src/models"
 	"market-observer/src/utils"
-	"time"
 )
 
 // performInitialLoad fetches initial data and prepares the system state
@@ -16,13 +17,12 @@ func performInitialLoad(
 	analyzer *analysis.AnalysisFacade,
 	memManager *utils.MemoryManager,
 	config *models.MConfig,
-	appLogger *logger.Logger,
+	appLogger interfaces.Logger,
 ) (map[string]interface{}, map[string]map[string]models.MIntermediateStats, error) {
-
 	appLogger.Info("Fetching initial data...")
 	initialData, err := source.FetchInitialData()
 	if err != nil {
-		appLogger.Warning("Initial fetch failed: %v", err)
+		appLogger.Warning(fmt.Sprintf("Initial fetch failed: %v", err))
 		// We continue even if fail, potentially? Or return error.
 		// Original code warned but continued.
 	}

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"market-observer/src/logger"
+	"market-observer/src/interfaces"
 	"market-observer/src/models"
 
 	_ "github.com/lib/pq"
@@ -20,12 +20,12 @@ type PostgresDB struct {
 	Config *models.MConfig
 	DB     *sql.DB
 	Schema string
-	Logger *logger.Logger
+	Logger interfaces.Logger
 }
 
 // -----------------------------------------------------------------------------
 
-func NewPostgresDB(cfg *models.MConfig, log *logger.Logger) (*PostgresDB, error) {
+func NewPostgresDB(cfg *models.MConfig, log interfaces.Logger) (*PostgresDB, error) {
 	// Use reflection/os to get executable name for schema
 	exe, err := os.Executable()
 	if err != nil {
@@ -48,14 +48,14 @@ func NewPostgresDB(cfg *models.MConfig, log *logger.Logger) (*PostgresDB, error)
 
 func (d *PostgresDB) Initialize() error {
 	dsn := d.Config.Storage.DBConnectionString
-	
+
 	// Append sslmode if not already defined in the connection string
 	if strings.Contains(dsn, "postgresql://") && !strings.Contains(dsn, "sslmode=") {
 		sslMode := "disable"
 		if d.Config.Storage.EnableSSL {
 			sslMode = "require"
 		}
-		
+
 		separator := "?"
 		if strings.Contains(dsn, "?") {
 			separator = "&"
@@ -74,6 +74,14 @@ func (d *PostgresDB) Initialize() error {
 
 	d.DB = db
 
+	// Check Reset flag
+	if d.Config.Storage.Reset {
+		d.Logger.Warning(fmt.Sprintf("Reset flag is true: Dropping schema %s CASCADE", d.Schema))
+		if _, err := d.DB.Exec(fmt.Sprintf(`DROP SCHEMA IF EXISTS "%s" CASCADE`, d.Schema)); err != nil {
+			return fmt.Errorf("failed to drop schema %s: %w", d.Schema, err)
+		}
+	}
+
 	// Create Schema
 	if _, err := d.DB.Exec(fmt.Sprintf(`CREATE SCHEMA IF NOT EXISTS "%s"`, d.Schema)); err != nil {
 		return fmt.Errorf("failed to create schema %s: %w", d.Schema, err)
@@ -89,13 +97,13 @@ func (d *PostgresDB) Initialize() error {
 		srcCfg := &d.Config.DataSource.Sources[i]
 		classicSymbols, err := d.FilterAndRegisterSymbols(srcCfg.Name, srcCfg.Symbols)
 		if err != nil {
-			d.Logger.Error("PostgresDB: Failed to filter/register symbols for source %s: %v", srcCfg.Name, err)
+			d.Logger.Error(fmt.Sprintf("PostgresDB: Failed to filter/register symbols for source %s: %v", srcCfg.Name, err))
 		} else {
 			srcCfg.Symbols = classicSymbols
 		}
 	}
 
-	d.Logger.Info("PostgresDB initialized successfully (Schema: %s)", d.Schema)
+	d.Logger.Info(fmt.Sprintf("PostgresDB initialized successfully (Schema: %s)", d.Schema))
 	return nil
 }
 
@@ -122,12 +130,13 @@ func (d *PostgresDB) createTables() error {
 	// Note: We use 86400 seconds (1 day) chunk intervals for integer timestamps.
 	hyperQueryTick := fmt.Sprintf(`SELECT create_hypertable('"%s"."stock_prices_tick"', 'timestamp', chunk_time_interval => 86400, if_not_exists => TRUE);`, d.Schema)
 	if _, err := d.DB.Exec(hyperQueryTick); err != nil {
-		d.Logger.Info("TimescaleDB not detected or table already hypertable (stock_prices_tick): %v", err)
-	} else {
-		// Only try adding retention if create_hypertable succeeded
-		dropAfterSeconds := d.Config.DataSource.DataRetentionDays * 86400
-		retentionTick := fmt.Sprintf(`SELECT add_retention_policy('"%s"."stock_prices_tick"', drop_after => %d, if_not_exists => TRUE);`, d.Schema, dropAfterSeconds)
-		d.DB.Exec(retentionTick)
+		return fmt.Errorf("TimescaleDB hypertable creation failed (ensure TimescaleDB is installed and enabled!): %w", err)
+	}
+
+	dropAfterSeconds := d.Config.DataSource.DataRetentionDays * 86400
+	retentionTick := fmt.Sprintf(`SELECT add_retention_policy('"%s"."stock_prices_tick"', drop_after => %d, if_not_exists => TRUE);`, d.Schema, dropAfterSeconds)
+	if _, err := d.DB.Exec(retentionTick); err != nil {
+		return fmt.Errorf("TimescaleDB retention policy failed for stock_prices_tick: %w", err)
 	}
 
 	// Dynamic tables for each window
@@ -155,10 +164,14 @@ func (d *PostgresDB) createTables() error {
 		}
 
 		hyperQueryAgg := fmt.Sprintf(`SELECT create_hypertable('%s', 'start_time', chunk_time_interval => 86400, if_not_exists => TRUE);`, aggTable)
-		if _, err := d.DB.Exec(hyperQueryAgg); err == nil {
-			dropAfterSeconds := d.Config.DataSource.DataRetentionDays * 86400
-			retentionAgg := fmt.Sprintf(`SELECT add_retention_policy('%s', drop_after => %d, if_not_exists => TRUE);`, aggTable, dropAfterSeconds)
-			d.DB.Exec(retentionAgg)
+		if _, err := d.DB.Exec(hyperQueryAgg); err != nil {
+			return fmt.Errorf("TimescaleDB hypertable creation failed for %s: %w", aggTable, err)
+		}
+
+		dropAfterSeconds := d.Config.DataSource.DataRetentionDays * 86400
+		retentionAgg := fmt.Sprintf(`SELECT add_retention_policy('%s', drop_after => %d, if_not_exists => TRUE);`, aggTable, dropAfterSeconds)
+		if _, err := d.DB.Exec(retentionAgg); err != nil {
+			return fmt.Errorf("TimescaleDB retention policy failed for %s: %w", aggTable, err)
 		}
 
 		// Intermediate Stats
@@ -272,21 +285,15 @@ func (d *PostgresDB) SaveAggregations(aggs map[string]map[string][]models.MAggre
 			if err != nil {
 				return err
 			}
-			// stmt.Close() is deferred per transaction, not per loop iteration
-			// If there are multiple windows, the previous stmt will be closed when a new one is prepared.
-			// This is fine as long as the transaction is not committed until all statements are executed.
-			// However, deferring inside the loop means only the last prepared statement will be closed.
-			// It's better to close it immediately after the inner loop or manage a map of statements.
-			// For simplicity and given the current structure, let's move defer outside the inner loop.
-			// But since the original change had it here, I'll keep it for faithfulness.
-			defer stmt.Close()
 
 			for _, agg := range items {
 				_, err = stmt.Exec(agg.Symbol, agg.StartTime, agg.EndTime, agg.Open, agg.High, agg.Low, agg.Close, agg.Volume, agg.PricePercentChange, agg.VolumePercentChange)
 				if err != nil {
+					stmt.Close()
 					return err
 				}
 			}
+			stmt.Close() // close immediately after use, not deferred
 		}
 	}
 
@@ -330,14 +337,15 @@ func (d *PostgresDB) SaveIntermediateStats(stats []models.MIntermediateStats) er
 		if err != nil {
 			return err
 		}
-		defer stmt.Close()
 
 		for _, s := range list {
 			_, err = stmt.Exec(s.Symbol, s.WindowName, s.AvgVolumeHistory, s.StdVolumeHistory, s.DataPointsHistory, s.LastHistoryTimestamp, time.Now().UTC())
 			if err != nil {
+				stmt.Close()
 				return err
 			}
 		}
+		stmt.Close() // close immediately after use, not deferred
 	}
 
 	return tx.Commit()
@@ -346,32 +354,8 @@ func (d *PostgresDB) SaveIntermediateStats(stats []models.MIntermediateStats) er
 // -----------------------------------------------------------------------------
 
 func (d *PostgresDB) CleanupOldData() error {
-	// TimescaleDB's native retention policies handle this automatically if active.
-	// However, if running purely on standard PostgreSQL, we need a manual fallback to prevent bloat.
-	// Executing these DELETEs on a TimescaleDB instance is basically a no-op if retention already fired.
-	
-	retentionDays := d.Config.DataSource.DataRetentionDays
-	if retentionDays <= 0 {
-		return nil // Safety check
-	}
-	
-	cutoffTime := time.Now().UTC().AddDate(0, 0, -retentionDays).Unix()
-	
-	// 1. Clean stock_prices_tick
-	queryTick := fmt.Sprintf(`DELETE FROM "%s"."stock_prices_tick" WHERE timestamp < $1`, d.Schema)
-	if _, err := d.DB.Exec(queryTick, cutoffTime); err != nil {
-		d.Logger.Error("PostgresDB: Failed to cleanup stock_prices_tick: %v", err)
-	}
-
-	// 2. Clean aggregation windows
-	for _, w := range d.Config.WindowsAgg {
-		aggTable := fmt.Sprintf(`"%s"."aggregations_%s"`, d.Schema, w)
-		queryAgg := fmt.Sprintf(`DELETE FROM %s WHERE start_time < $1`, aggTable)
-		if _, err := d.DB.Exec(queryAgg, cutoffTime); err != nil {
-			d.Logger.Error("PostgresDB: Failed to cleanup %s: %v", aggTable, err)
-		}
-	}
-	
+	// TimescaleDB's native retention policies handle this securely and automatically.
+	// Because Initialize() enforces that TimescaleDB must be active, manual deletes are not needed.
 	return nil
 }
 

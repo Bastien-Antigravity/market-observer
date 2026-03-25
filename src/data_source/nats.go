@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"market-observer/src/interfaces"
-	"market-observer/src/logger"
 	"market-observer/src/models"
 
 	"github.com/nats-io/nats.go"
@@ -19,15 +18,17 @@ import (
 type NATSDataSource struct {
 	Config     *models.MConfig
 	SourceConf models.MSourceConfig
-	Logger     *logger.Logger
+	Logger     interfaces.Logger
 	conn       *nats.Conn
 	sub        *nats.Subscription
 	symbols    []string
+	isRunning  bool
+	ctx        context.Context
 }
 
 // -----------------------------------------------------------------------------
 
-func NewNATSDataSource(cfg *models.MConfig, srcConf models.MSourceConfig, logger *logger.Logger) interfaces.IDataSource {
+func NewNATSDataSource(cfg *models.MConfig, srcConf models.MSourceConfig, logger interfaces.Logger) interfaces.IDataSource {
 	return &NATSDataSource{
 		Config:     cfg,
 		SourceConf: srcConf,
@@ -46,6 +47,14 @@ func (ns *NATSDataSource) Name() string {
 
 func (ns *NATSDataSource) IsRealTime() bool {
 	return true
+}
+
+func (ns *NATSDataSource) Type() string {
+	return "nats"
+}
+
+func (ns *NATSDataSource) IsRunning() bool {
+	return ns.isRunning
 }
 
 // -----------------------------------------------------------------------------
@@ -71,6 +80,7 @@ func (ns *NATSDataSource) FetchUpdateData() (map[string][]models.MStockPrice, er
 // -----------------------------------------------------------------------------
 
 func (ns *NATSDataSource) Start(ctx context.Context, outputChan chan<- map[string][]models.MStockPrice, wg *sync.WaitGroup) error {
+	ns.ctx = ctx
 	if len(ns.Config.Nats.Servers) == 0 {
 		return fmt.Errorf("no nats servers configured")
 	}
@@ -88,25 +98,26 @@ func (ns *NATSDataSource) Start(ctx context.Context, outputChan chan<- map[strin
 	}
 	ns.conn = nc
 
-	wg.Add(1)
+	ns.conn = nc
 
+	// Don't call wg.Add(1) here; the caller (MultiSourceManager) already does it for the primary loop or cancellation listener
 	subject := ns.Config.Nats.Subject
 	if subject == "" {
 		subject = "tick.raw" // Safety fallback
 	}
 
-	ns.Logger.Info("[%s] Connected to NATS and subscribing to %s", ns.Name(), subject)
+	ns.Logger.Info(fmt.Sprintf("[%s] Connected to NATS and subscribing to %s", ns.Name(), subject))
 
 	sub, err := nc.Subscribe(subject, func(m *nats.Msg) {
 		// Attempt to parse as single tick or array of ticks
 		var ticks []models.MStockPrice
-		
+
 		// Try array first
 		if err := json.Unmarshal(m.Data, &ticks); err != nil {
 			// Fallback to single object
 			var singleTick models.MStockPrice
 			if err2 := json.Unmarshal(m.Data, &singleTick); err2 != nil {
-				ns.Logger.Error("Failed to parse NATS message: arrayErr=%v, singleErr=%v", err, err2)
+				ns.Logger.Error(fmt.Sprintf("Failed to parse NATS message: arrayErr=%v, singleErr=%v", err, err2))
 				return
 			}
 			ticks = []models.MStockPrice{singleTick}
@@ -120,10 +131,14 @@ func (ns *NATSDataSource) Start(ctx context.Context, outputChan chan<- map[strin
 			}
 			dataMap[t.Symbol] = append(dataMap[t.Symbol], t)
 		}
-		
-		outputChan <- dataMap
-	})
 
+		// Context-aware send to avoid blocking during shutdown
+		select {
+		case outputChan <- dataMap:
+		case <-ns.ctx.Done():
+			return
+		}
+	})
 	if err != nil {
 		ns.conn.Close()
 		ns.conn = nil
@@ -131,6 +146,7 @@ func (ns *NATSDataSource) Start(ctx context.Context, outputChan chan<- map[strin
 		return err
 	}
 	ns.sub = sub
+	ns.isRunning = true
 
 	// Listen for cancellation
 	go func() {
@@ -145,6 +161,7 @@ func (ns *NATSDataSource) Start(ctx context.Context, outputChan chan<- map[strin
 // -----------------------------------------------------------------------------
 
 func (ns *NATSDataSource) Stop() error {
+	ns.isRunning = false
 	if ns.sub != nil {
 		ns.sub.Unsubscribe()
 	}
@@ -152,6 +169,6 @@ func (ns *NATSDataSource) Stop() error {
 		ns.conn.Close()
 		ns.conn = nil
 	}
-	ns.Logger.Info("[%s] Connection stopped", ns.Name())
+	ns.Logger.Info(fmt.Sprintf("[%s] Connection stopped", ns.Name()))
 	return nil
 }

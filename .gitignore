@@ -1,65 +1,74 @@
-# macOS
-.DS_Store
-.AppleDouble
-.LSOverride
-
-# Go workspace binaries and objects
-*.exe
-*.exe~
-*.dll
-*.so
-*.out
-*.dylib
-
-# Compiled Object files, Static and Dynamic libs (Shared Objects)
-*.o
+# --- Auto-generated Merged .gitignore ---
+*$py.class
+**/*.rs.bk
 *.a
-*.lib
-*.so
-
-# Test Binary
-test_app
-*.test
-
-# Python migration files
-*.py
-*.pyc
-__pycache__/
-
-# Database artifacts
 *.db
-*.sqlite3
 *.db-shm
 *.db-wal
-
-# Log and Output files
+*.dll
+*.dylib
+*.egg
+*.egg-info/
+*.exe
+*.exe~
+*.lib
 *.log
-mock_output.txt
-
-# OS Files
+*.o
+*.out
+*.prof
+*.py
+*.py[cod]
+*.pyc
+*.so
+*.sqlite3
+*.swo
+*.swp
+*.test
+.AppleDouble
 .DS_Store
+.DS_Store?
+.LSOverride
+.Python
+.Spotlight-V100
+.Trashes
+._*
+.eggs/
+.env
+.idea/
+.installed.cfg
+.venv/
+.vscode
+.vscode/
+Cargo.lock
+ENV/
 Thumbs.db
-
-# Go workspace file
+__debug_*
+__debug_bin*
+__pycache__/
+bin/
+build/
+config_store.json
+develop-eggs/
+dist/
+downloads/
+eggs/
+ehthumbs.db
+env/
 go.work
 go.work.sum
-
-# IDEs
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# Environment variables
-.env
-
-# Output of the go coverage tool, specifically when used with LiteIDE
-*.out
-
-# Dependency directories (remove the comment below to include it)
-# vendor/
-
-# OS metadata
-.DS_Store
-._*
-Thumbs.db
+lib/
+lib64/
+logs/
+main
+mock_output.txt
+parts/
+sdist/
+target/
+temp/
+test
+test_app
+tmp/
+var/
+vendor/
+venv/
+wheels/
