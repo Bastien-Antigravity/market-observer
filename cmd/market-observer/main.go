@@ -13,7 +13,6 @@ import (
 	"market-observer/src/server"
 	"market-observer/src/utils"
 
-	distributed_config "github.com/Bastien-Antigravity/distributed-config"
 	"github.com/Bastien-Antigravity/flexible-logger/src/profiles"
 )
 
@@ -30,8 +29,9 @@ func main() {
 	}
 
 	// 3. Setup Logger (using HighPerfLogger for main app)
-	dConfig := distributed_config.New("standalone")
-	appLogger := profiles.NewHighPerfLogger(conf.Name, dConfig)
+	// dConfig := distributed_config.New("standalone")
+	// appLogger := profiles.NewHighPerfLogger(conf.Name, dConfig)
+	appLogger := profiles.NewDevelLogger(conf.Name)
 	defer appLogger.Close()
 
 	// 4. Setup Components

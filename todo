@@ -1,4 +1,4 @@
 - test TradingView
-- vérifier que postgres 
+- postgres retention day ? or Timescale retention configuration ?
 - add notifier binding
 - load global config (servers address mainly)

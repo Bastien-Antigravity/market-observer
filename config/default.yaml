@@ -13,6 +13,8 @@ storage:
   db_connection_string: postgresql://dbuser:dbuser@127.0.0.1:5432/maindb
   enable_ssl: false
   postgres_mode: both
+  # If true, it completely drops the Postgres schema or deletes the SQLite file at startup.
+  reset: true
 
 # --- NATS CONNECTION & JETSTREAM CONFIGURATION ---
 nats:
@@ -82,22 +84,25 @@ data_source:
   data_retention_days: 7
   update_interval_seconds: 300
   sources:
+    # for postgres database we can load symbol from a table
+    # example: "schema.table.field"
+
     # Example TradingView connector
     #- name: "TradingView Stream"
     #  type: "trading_view"
     #  enabled: true
     #  symbols: ["AAPL", "NVDA"]
+
     # Example NATS Streaming connector (ensure only ONE source is enabled)
     # - name: "NATS Stream"
     #   type: "nats"
     #   enabled: false
     #   symbols: [] # Leave empty for all, or specify symbols
+    
     - name: "Yahoo Finance"
       type: "yahoo"
       enabled: true
       symbols:
-      # for postgres database we can load symbol from a table
-      # example: "schema.table.field"
         - AAPL
         - MSFT
         - GOOGL
@@ -176,10 +181,8 @@ data_source:
         - EL
         - TJX
         - ADP
-        - C
         - MO
         - CB
-        - MMC
         - GE
         - ADI
         - TMUS
